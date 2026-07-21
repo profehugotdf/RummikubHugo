@@ -3,81 +3,89 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Conexión P2P</title>
+<title>Rummikub</title>
 <style>
-  body { font-family: sans-serif; padding: 16px; background:#1b3d1b; color:#eee; font-size:16px; }
-  textarea { width:100%; height:90px; font-size:14px; box-sizing:border-box; margin:8px 0; }
-  button { padding:14px; margin:8px 0; width:100%; font-size:17px; border-radius:8px; border:none; background:#4caf50; color:white; }
-  button:disabled { background:#666; }
-  .paso { background:#2a5a2a; padding:14px; border-radius:10px; margin:10px 0; }
-  .titulo { font-weight:bold; font-size:18px; margin-bottom:6px; }
+  body { font-family: sans-serif; margin:0; padding:10px; background:#1b3d1b; color:#eee; font-size:16px; }
+  h2 { margin:6px 0; }
+  textarea { width:100%; height:70px; font-size:13px; box-sizing:border-box; margin:6px 0; }
+  button { padding:12px; margin:6px 0; width:100%; font-size:16px; border-radius:8px; border:none; background:#4caf50; color:white; }
+  .paso { background:#2a5a2a; padding:12px; border-radius:10px; margin:8px 0; }
+  .titulo { font-weight:bold; font-size:17px; margin-bottom:4px; }
   .oculto { display:none; }
-  #log { background:#000; color:#0f0; padding:10px; font-size:13px; min-height:60px; border-radius:8px; white-space:pre-wrap; }
-  .rol { font-size:20px; padding:20px; }
+  #log { background:#000; color:#0f0; padding:8px; font-size:12px; min-height:34px; border-radius:8px; white-space:pre-wrap; }
+  .rol { font-size:18px; padding:16px; }
+  /* fichas */
+  #mano { display:flex; flex-wrap:wrap; gap:5px; background:#0d260d; padding:8px; border-radius:10px; min-height:60px; }
+  .ficha { width:42px; height:56px; background:#f5f0e1; border-radius:6px; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:20px; box-shadow:0 2px 3px rgba(0,0,0,.4); }
+  .c-rojo{color:#d21b1b;} .c-azul{color:#1b52d2;} .c-negro{color:#111;} .c-naranja{color:#e08a00;}
+  .comodin{ color:#c0392b; font-size:24px; }
 </style>
 </head>
 <body>
-  <h2>Conexión P2P</h2>
+  <h2>Rummikub</h2>
 
+  <!-- Elegir rol -->
   <div id="elegirRol" class="paso">
     <div class="titulo">¿Quién sos?</div>
-    <button class="rol" onclick="soyA()">Soy el que INVITA (Jugador A)</button>
-    <button class="rol" onclick="soyB()">Me UNO a una invitación (Jugador B)</button>
+    <button class="rol" onclick="soyA()">Soy el ANFITRIÓN (reparto yo)</button>
+    <button class="rol" onclick="soyB()">Me UNO a la partida</button>
   </div>
 
+  <!-- FLUJO A -->
   <div id="flujoA" class="oculto">
     <div class="paso">
       <div class="titulo">Paso 1 — Tu invitación</div>
-      <div>Copiá este código y envialo a tu compañero por WhatsApp:</div>
+      <div>Copiala y mandala por WhatsApp:</div>
       <textarea id="ofertaOut" readonly></textarea>
       <button onclick="copiar('ofertaOut')">Copiar invitación</button>
     </div>
     <div class="paso">
       <div class="titulo">Paso 2 — Su respuesta</div>
-      <div>Cuando te devuelva su código, pegalo acá:</div>
-      <textarea id="respuestaIn" placeholder="Pegá acá la respuesta de tu compañero"></textarea>
-      <button onclick="confirmarA()">Conectar</button>
+      <textarea id="respuestaIn" placeholder="Pegá acá la respuesta"></textarea>
+      <button onclick="confirmarA()">Conectar y repartir</button>
     </div>
   </div>
 
+  <!-- FLUJO B -->
   <div id="flujoB" class="oculto">
     <div class="paso">
       <div class="titulo">Paso 1 — La invitación</div>
-      <div>Pegá acá el código que te enviaron:</div>
       <textarea id="ofertaIn" placeholder="Pegá acá la invitación"></textarea>
       <button onclick="unirseB()">Generar mi respuesta</button>
     </div>
     <div id="pasoBResp" class="paso oculto">
       <div class="titulo">Paso 2 — Tu respuesta</div>
-      <div>Copiá este código y envialo de vuelta por WhatsApp:</div>
       <textarea id="respuestaOut" readonly></textarea>
       <button onclick="copiar('respuestaOut')">Copiar respuesta</button>
     </div>
   </div>
 
-  <div id="zonaChat" class="oculto">
+  <!-- ESTADO -->
+  <div id="zonaEstado" class="oculto paso">
+    <div id="log">Esperando conexión...</div>
+  </div>
+
+  <!-- JUEGO -->
+  <div id="zonaJuego" class="oculto">
     <div class="paso">
-      <div class="titulo">Estado</div>
-      <div id="log">Esperando conexión...</div>
-      <textarea id="msgIn" placeholder="Escribí un mensaje de prueba" style="height:50px"></textarea>
-      <button onclick="enviar()">Enviar mensaje</button>
+      <div class="titulo">Tu mano (<span id="cuenta">0</span> fichas) · Pozo: <span id="pozo">0</span></div>
+      <div id="mano"></div>
     </div>
   </div>
 
 <script>
-let pc, dataChannel, esOfertante = false;
+/* ---------- Conexión P2P (ya probada) ---------- */
+let pc, dataChannel, esAnfitrion = false;
 const $ = (id) => document.getElementById(id);
-const log = (t) => { $('log').textContent += "\n" + t; };
+const log = (t) => { $('log').textContent = t; };
 
 function crearPC() {
   pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
   let listo = false;
   const terminar = () => {
-    if (listo) return;
-    listo = true;
+    if (listo) return; listo = true;
     const code = btoa(JSON.stringify(pc.localDescription));
-    if (esOfertante) $('ofertaOut').value = code;
-    else $('respuestaOut').value = code;
+    if (esAnfitrion) $('ofertaOut').value = code; else $('respuestaOut').value = code;
   };
   pc.onicecandidate = (e) => { if (e.candidate === null) terminar(); };
   setTimeout(terminar, 3000);
@@ -85,63 +93,104 @@ function crearPC() {
 
 function conectarCanal(dc) {
   dataChannel = dc;
-  dc.onopen = () => { $('log').textContent = "✅ ¡Conectado! Ya podés enviar mensajes."; };
-  dc.onmessage = (e) => log("Recibido: " + e.data);
+  dc.onopen = () => {
+    $('elegirRol').classList.add('oculto');
+    $('flujoA').classList.add('oculto');
+    $('flujoB').classList.add('oculto');
+    $('zonaEstado').classList.remove('oculto');
+    $('zonaJuego').classList.remove('oculto');
+    log("✅ ¡Conectado!");
+    if (esAnfitrion) repartir();
+  };
+  dc.onmessage = (e) => manejarMensaje(JSON.parse(e.data));
   dc.onclose = () => log("❌ Conexión cerrada.");
 }
+function enviar(obj) { if (dataChannel && dataChannel.readyState === "open") dataChannel.send(JSON.stringify(obj)); }
 
-function soyA() {
-  esOfertante = true;
-  $('elegirRol').classList.add('oculto');
-  $('flujoA').classList.remove('oculto');
-  $('zonaChat').classList.remove('oculto');
-  crearPC();
-  conectarCanal(pc.createDataChannel("juego"));
-  pc.createOffer().then(o => pc.setLocalDescription(o));
-}
-
-function soyB() {
-  $('elegirRol').classList.add('oculto');
-  $('flujoB').classList.remove('oculto');
-  $('zonaChat').classList.remove('oculto');
-}
+function soyA() { esAnfitrion = true; $('elegirRol').classList.add('oculto'); $('flujoA').classList.remove('oculto');
+  crearPC(); conectarCanal(pc.createDataChannel("juego")); pc.createOffer().then(o => pc.setLocalDescription(o)); }
+function soyB() { $('elegirRol').classList.add('oculto'); $('flujoB').classList.remove('oculto'); }
 
 async function unirseB() {
-  const txt = $('ofertaIn').value.trim();
-  if (!txt) { alert("Pegá primero la invitación"); return; }
-  crearPC();
-  pc.ondatachannel = (e) => conectarCanal(e.channel);
+  const txt = $('ofertaIn').value.trim(); if (!txt) { alert("Pegá la invitación"); return; }
+  crearPC(); pc.ondatachannel = (e) => conectarCanal(e.channel);
   await pc.setRemoteDescription(JSON.parse(atob(txt)));
-  const answer = await pc.createAnswer();
-  await pc.setLocalDescription(answer);
+  const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
   $('pasoBResp').classList.remove('oculto');
 }
-
 async function confirmarA() {
-  const txt = $('respuestaIn').value.trim();
-  if (!txt) { alert("Pegá primero la respuesta"); return; }
+  const txt = $('respuestaIn').value.trim(); if (!txt) { alert("Pegá la respuesta"); return; }
   await pc.setRemoteDescription(JSON.parse(atob(txt)));
-  log("Respuesta recibida, conectando...");
 }
+function copiar(id) { const el=$(id); el.select(); navigator.clipboard.writeText(el.value)
+  .then(()=>alert("¡Copiado!"), ()=>{document.execCommand('copy');alert("¡Copiado!");}); }
 
-function copiar(id) {
-  const el = $(id);
-  el.select();
-  navigator.clipboard.writeText(el.value).then(
-    () => alert("¡Copiado! Ahora pegalo en WhatsApp."),
-    () => { document.execCommand('copy'); alert("¡Copiado!"); }
-  );
+/* ---------- Juego: mazo y reparto ---------- */
+const COLORES = ["rojo","azul","negro","naranja"];
+let miMano = [], fichasEnPozo = 0;
+
+function crearMazo() {
+  const mazo = [];
+  let id = 0;
+  for (let copia = 0; copia < 2; copia++)
+    for (const color of COLORES)
+      for (let num = 1; num <= 13; num++)
+        mazo.push({ id: id++, num, color });
+  mazo.push({ id: id++, comodin: true });
+  mazo.push({ id: id++, comodin: true });
+  return mazo;
 }
-
-function enviar() {
-  const msg = $('msgIn').value;
-  if (dataChannel && dataChannel.readyState === "open") {
-    dataChannel.send(msg);
-    log("Enviado: " + msg);
-    $('msgIn').value = "";
-  } else {
-    alert("Todavía no está conectado el canal.");
+function mezclar(a) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
   }
+  return a;
+}
+
+// Solo el anfitrión reparte
+function repartir() {
+  const mazo = mezclar(crearMazo());
+  const manoA = mazo.splice(0, 14);
+  const manoB = mazo.splice(0, 14);
+  fichasEnPozo = mazo.length;              // el resto queda en el pozo
+  // le mando a B su mano y el tamaño del pozo
+  enviar({ tipo: "reparto", mano: manoB, pozo: fichasEnPozo });
+  // yo me quedo con la mía
+  miMano = manoA;
+  render();
+}
+
+function manejarMensaje(msg) {
+  if (msg.tipo === "reparto") {
+    miMano = msg.mano;
+    fichasEnPozo = msg.pozo;
+    render();
+  }
+}
+
+/* ---------- Dibujar la mano ---------- */
+function ordenarMano() {
+  miMano.sort((a, b) => {
+    if (a.comodin) return 1;
+    if (b.comodin) return -1;
+    if (a.color !== b.color) return COLORES.indexOf(a.color) - COLORES.indexOf(b.color);
+    return a.num - b.num;
+  });
+}
+function render() {
+  ordenarMano();
+  const cont = $('mano');
+  cont.innerHTML = "";
+  for (const f of miMano) {
+    const div = document.createElement("div");
+    div.className = "ficha";
+    if (f.comodin) { div.classList.add("comodin"); div.textContent = "★"; }
+    else { div.classList.add("c-" + f.color); div.textContent = f.num; }
+    cont.appendChild(div);
+  }
+  $('cuenta').textContent = miMano.length;
+  $('pozo').textContent = fichasEnPozo;
 }
 </script>
 </body>
