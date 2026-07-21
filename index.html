@@ -23,6 +23,7 @@
   .botonera { display:flex; gap:8px; }
   .botonera button { margin:6px 0; }
   #btnDeshacer { background:#c0392b; }
+  #aviso { background:#1565c0; color:#fff; padding:10px; border-radius:8px; margin:8px 0; }
 
   #mano { display:flex; flex-wrap:wrap; gap:5px; background:#0d260d; padding:8px; border-radius:10px; min-height:60px; }
   #tablero { display:grid; grid-template-columns:repeat(8, 1fr); gap:4px; background:#0d3d0d; padding:8px; border-radius:10px; min-height:130px; }
@@ -40,10 +41,13 @@
 <body>
   <h2>Rummikub</h2>
 
+  <div id="aviso" class="oculto"></div>
+
   <div id="elegirRol" class="paso">
     <div class="titulo">¿Quién sos?</div>
     <button class="rol" onclick="soyA()">Soy el ANFITRIÓN (reparto yo)</button>
     <button class="rol" onclick="soyB()">Me UNO a la partida</button>
+    <button id="btnReconectar" class="oculto" style="background:#1565c0" onclick="reconectar()">Reconectar (recuperé una partida)</button>
   </div>
 
   <div id="flujoA" class="oculto">
@@ -56,7 +60,7 @@
     <div class="paso">
       <div class="titulo">Paso 2 — Su respuesta</div>
       <textarea id="respuestaIn" placeholder="Pegá acá la respuesta"></textarea>
-      <button onclick="confirmarA()">Conectar y repartir</button>
+      <button onclick="confirmarA()">Conectar</button>
     </div>
   </div>
 
@@ -95,11 +99,23 @@
   </div>
 
 <script>
+/* ---------- Persistencia ---------- */
+const CLAVE = "rummikub_estado";
+function guardar() {
+  const estado = { miMano, fichasEnPozo, tablero, esMiTurno, esAnfitrion, hayJuego:true };
+  try { localStorage.setItem(CLAVE, JSON.stringify(estado)); } catch(e){}
+}
+function cargarGuardado() {
+  try { const s = localStorage.getItem(CLAVE); return s ? JSON.parse(s) : null; } catch(e){ return null; }
+}
+function borrarGuardado() { try { localStorage.removeItem(CLAVE); } catch(e){} }
+
 /* ---------- Conexión P2P ---------- */
 let pc, dataChannel, esAnfitrion = false;
 const $ = (id) => document.getElementById(id);
 function log(t){ const l=$('log'); l.textContent += "\n" + t; l.scrollTop = l.scrollHeight; }
 function setLog(t){ $('log').textContent = t; }
+function mostrarAviso(t){ const a=$('aviso'); a.textContent=t; a.classList.remove('oculto'); }
 
 function crearPC() {
   pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
@@ -119,10 +135,11 @@ function usarCanal(dc) {
     $('zonaEstado').classList.remove('oculto');
     $('zonaJuego').classList.remove('oculto');
     setLog("✅ ¡Conectado!");
-    if (esAnfitrion) repartir();
+    if (esAnfitrion && !recuperado) repartir();
+    else { render(); actualizarUI(); }
   };
   dc.onmessage = (e) => manejarMensaje(JSON.parse(e.data));
-  dc.onclose = () => log("❌ Canal cerrado.");
+  dc.onclose = () => { log("❌ Canal cerrado."); mostrarAviso("Se cortó la conexión. Recargá y tocá 'Reconectar' para seguir la partida."); };
 }
 function enviar(obj) {
   if (dataChannel && dataChannel.readyState === "open") dataChannel.send(JSON.stringify(obj));
@@ -148,19 +165,24 @@ async function confirmarA() {
 function copiar(id) { const el=$(id); el.select(); navigator.clipboard.writeText(el.value)
   .then(()=>alert("¡Copiado!"), ()=>{document.execCommand('copy');alert("¡Copiado!");}); }
 
+function reconectar() {
+  const g = cargarGuardado();
+  if (!g) { alert("No hay partida guardada"); return; }
+  if (g.esAnfitrion) soyA(); else soyB();
+}
+
 /* ---------- Estado del juego ---------- */
 const COLORES = ["rojo","azul","negro","naranja"];
 const CELDAS_TABLERO = 32;
-const VEL_REPLAY = 400; // ms por movimiento en la reproducción
+const VEL_REPLAY = 400;
 
 let miMano = [], fichasEnPozo = 0;
 let tablero = new Array(CELDAS_TABLERO).fill(null);
 let esMiTurno = false;
 let reproduciendo = false;
+let recuperado = false;
 
-// respaldo para "Deshacer": estado al empezar mi turno
 let manoInicioTurno = null, tableroInicioTurno = null;
-// movimientos que hice este turno, para mandárselos al rival
 let movimientos = [];
 
 function crearMazo() {
@@ -183,16 +205,15 @@ function repartir() {
   miMano = manoA;
   esMiTurno = anfitrionEmpieza;
   iniciarTurnoSiCorresponde();
-  render();
-  actualizarUI();
+  render(); actualizarUI(); guardar();
 }
 
 function manejarMensaje(msg) {
   if (msg.tipo === "reparto") {
     miMano = msg.mano; fichasEnPozo = msg.pozo;
-    esMiTurno = msg.rivalEmpieza; // si el anfitrión NO empieza, empiezo yo
+    esMiTurno = msg.rivalEmpieza;
     iniciarTurnoSiCorresponde();
-    render(); actualizarUI();
+    render(); actualizarUI(); guardar();
   } else if (msg.tipo === "jugada") {
     reproducirJugada(msg);
   }
@@ -212,55 +233,46 @@ function deshacer() {
   miMano = JSON.parse(JSON.stringify(manoInicioTurno));
   tablero = JSON.parse(JSON.stringify(tableroInicioTurno));
   movimientos = [];
-  render();
+  render(); guardar();
 }
-
 function enviarJugada() {
   if (!esMiTurno) return;
-  // (En la etapa 2b siguiente validaremos melds acá.)
   enviar({ tipo:"jugada", tablero:tablero, mano:miMano.length, pozo:fichasEnPozo, movimientos });
   esMiTurno = false;
-  actualizarUI();
+  actualizarUI(); guardar();
 }
-
 function robar() {
   if (!esMiTurno) return;
   if (fichasEnPozo <= 0) { alert("El pozo está vacío"); return; }
-  // El robo real de una ficha concreta lo maneja el anfitrión en una etapa futura;
-  // por ahora, robar simplemente descuenta del pozo y pasa el turno.
   fichasEnPozo--;
-  // devuelvo el tablero a como estaba (no se permite jugar y robar a la vez)
   tablero = JSON.parse(JSON.stringify(tableroInicioTurno));
   miMano = JSON.parse(JSON.stringify(manoInicioTurno));
   enviar({ tipo:"jugada", tablero:tablero, mano:miMano.length, pozo:fichasEnPozo, movimientos:[], robo:true });
   esMiTurno = false;
-  render(); actualizarUI();
+  render(); actualizarUI(); guardar();
 }
 
-/* ---------- Recibir y reproducir la jugada del rival ---------- */
+/* ---------- Reproducir jugada del rival ---------- */
 async function reproducirJugada(msg) {
-  reproduciendo = true;
-  actualizarUI();
+  reproduciendo = true; actualizarUI();
   const movs = msg.movimientos || [];
   for (const m of movs) {
     aplicarMovimientoVisual(m);
     const celda = document.querySelector('.celda[data-celda="'+m.destino+'"]');
-    if (celda) { celda.classList.add("replay"); }
+    if (celda) celda.classList.add("replay");
     await esperar(VEL_REPLAY);
     if (celda) celda.classList.remove("replay");
   }
-  // estado final autoritativo
   tablero = msg.tablero;
   fichasEnPozo = msg.pozo;
   reproduciendo = false;
   esMiTurno = true;
   iniciarTurnoSiCorresponde();
-  render(); actualizarUI();
+  render(); actualizarUI(); guardar();
 }
 function aplicarMovimientoVisual(m) {
-  // m: { ficha, destino, desdeMano }
-  if (m.destino != null) tablero[m.destino] = m.ficha;
   if (m.origenTablero != null) tablero[m.origenTablero] = null;
+  if (m.destino != null) tablero[m.destino] = m.ficha;
   renderTablero();
 }
 function esperar(ms){ return new Promise(r=>setTimeout(r,ms)); }
@@ -271,7 +283,6 @@ function actualizarUI() {
   if (reproduciendo) { et.textContent = "👀 Mirando la jugada del rival..."; et.className = "turnoRival"; }
   else if (esMiTurno) { et.textContent = "🟢 Tu turno"; et.className = "miTurno"; }
   else { et.textContent = "⏳ Turno del rival"; et.className = "turnoRival"; }
-
   const bloq = !esMiTurno || reproduciendo;
   $('btnDeshacer').disabled = bloq;
   $('btnEnviar').disabled = bloq;
@@ -336,7 +347,6 @@ function hacerArrastrable(div, ficha) {
     arrastre.fantasma.style.top=(e.clientY-arrastre.offY)+"px";
     document.querySelectorAll(".celda.resaltada").forEach(c=>c.classList.remove("resaltada"));
     const celda = celdaBajoPunto(e.clientX, e.clientY);
-    const sobreMano = elementoBajoPuntoEsMano(e.clientX, e.clientY);
     if(celda) celda.classList.add("resaltada");
   });
   div.addEventListener("pointerup", (e) => {
@@ -367,17 +377,39 @@ function soltarEnCelda(destino) {
     tablero[destino] = f;
     movimientos.push({ ficha:f, destino, origenTablero:orig });
   }
-  render();
+  render(); guardar();
 }
 function soltarEnMano() {
-  if (arrastre.origen !== "tablero") return; // ya está en la mano
+  if (arrastre.origen !== "tablero") return;
   const f = arrastre.ficha;
   const orig = parseInt(arrastre.celdaOrigen);
   tablero[orig] = null;
   miMano.push(f);
   movimientos.push({ ficha:f, aMano:true, origenTablero:orig });
-  render();
+  render(); guardar();
 }
+
+/* ---------- Avisar antes de recargar/cerrar si hay partida ---------- */
+window.addEventListener("beforeunload", (e) => {
+  const g = cargarGuardado();
+  if (g && g.hayJuego) {
+    e.preventDefault();
+    e.returnValue = "";
+  }
+});
+
+/* ---------- Al cargar la página ---------- */
+window.addEventListener("load", () => {
+  const g = cargarGuardado();
+  if (g && g.hayJuego) {
+    miMano = g.miMano; fichasEnPozo = g.fichasEnPozo; tablero = g.tablero;
+    esMiTurno = g.esMiTurno; esAnfitrion = g.esAnfitrion; recuperado = true;
+    manoInicioTurno = JSON.parse(JSON.stringify(miMano));
+    tableroInicioTurno = JSON.parse(JSON.stringify(tablero));
+    mostrarAviso("Se recuperó tu partida. Tocá 'Reconectar' para volver a unirte con tu compañero.");
+    $('btnReconectar').classList.remove('oculto');
+  }
+});
 </script>
 </body>
 </html>
