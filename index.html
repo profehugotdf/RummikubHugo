@@ -5,13 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light only">
 <title>Rummikub</title>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <style>
   :root { color-scheme: light only; }
   body { font-family: sans-serif; margin:0; padding:10px; background:#1b3d1b; color:#eee; font-size:16px; }
   h2 { margin:6px 0; }
-  textarea { width:100%; height:70px; font-size:13px; box-sizing:border-box; margin:6px 0; background:#fff !important; color:#000 !important; }
+  textarea { width:100%; height:60px; font-size:13px; box-sizing:border-box; margin:6px 0; background:#fff !important; color:#000 !important; }
   button { padding:12px; margin:6px 0; width:100%; font-size:16px; border-radius:8px; border:none; background:#4caf50; color:white; }
   button:disabled { background:#777; opacity:.6; }
+  .btnSec { background:#1565c0; }
   .paso { background:#2a5a2a; padding:12px; border-radius:10px; margin:8px 0; }
   .titulo { font-weight:bold; font-size:17px; margin-bottom:4px; color:#fff; }
   .oculto { display:none; }
@@ -24,6 +27,12 @@
   .botonera button { margin:6px 0; }
   #btnDeshacer { background:#c0392b; }
   #aviso { background:#1565c0; color:#fff; padding:10px; border-radius:8px; margin:8px 0; }
+  .qrbox { background:#fff; padding:10px; border-radius:8px; display:inline-block; margin:6px 0; }
+  .qrbox img, .qrbox canvas { display:block; }
+  #camWrap { position:relative; }
+  #cam { width:100%; border-radius:8px; background:#000; }
+  .detalle { font-size:13px; color:#cde; }
+  details summary { cursor:pointer; padding:6px 0; }
 
   #mano { display:flex; flex-wrap:wrap; gap:5px; background:#0d260d; padding:8px; border-radius:10px; min-height:60px; }
   #tablero { display:grid; grid-template-columns:repeat(8, 1fr); gap:4px; background:#0d3d0d; padding:8px; border-radius:10px; min-height:130px; }
@@ -47,34 +56,58 @@
     <div class="titulo">¿Quién sos?</div>
     <button class="rol" onclick="soyA()">Soy el ANFITRIÓN (reparto yo)</button>
     <button class="rol" onclick="soyB()">Me UNO a la partida</button>
-    <button id="btnReconectar" class="oculto" style="background:#1565c0" onclick="reconectar()">Reconectar (recuperé una partida)</button>
+    <button id="btnReconectar" class="oculto btnSec" onclick="reconectar()">Reconectar (recuperé una partida)</button>
   </div>
 
+  <!-- FLUJO ANFITRIÓN -->
   <div id="flujoA" class="oculto">
     <div class="paso">
-      <div class="titulo">Paso 1 — Tu invitación</div>
-      <div>Copiala y mandala por WhatsApp:</div>
-      <textarea id="ofertaOut" readonly></textarea>
-      <button onclick="copiar('ofertaOut')">Copiar invitación</button>
+      <div class="titulo">Paso 1 — Mostrale este QR a tu compañero</div>
+      <div class="qrbox" id="qrOferta"></div>
+      <details>
+        <summary class="detalle">o enviar por WhatsApp (si no están juntos)</summary>
+        <textarea id="ofertaOut" readonly></textarea>
+        <button class="btnSec" onclick="copiar('ofertaOut')">Copiar invitación</button>
+      </details>
     </div>
     <div class="paso">
-      <div class="titulo">Paso 2 — Su respuesta</div>
-      <textarea id="respuestaIn" placeholder="Pegá acá la respuesta"></textarea>
-      <button onclick="confirmarA()">Conectar</button>
+      <div class="titulo">Paso 2 — Escaneá el QR de la respuesta</div>
+      <button onclick="abrirCamara('respuestaIn', confirmarA)">📷 Escanear respuesta</button>
+      <details>
+        <summary class="detalle">o pegar respuesta (si no están juntos)</summary>
+        <textarea id="respuestaIn" placeholder="Pegá acá la respuesta"></textarea>
+        <button class="btnSec" onclick="confirmarA()">Conectar</button>
+      </details>
     </div>
   </div>
 
+  <!-- FLUJO INVITADO -->
   <div id="flujoB" class="oculto">
     <div class="paso">
-      <div class="titulo">Paso 1 — La invitación</div>
-      <textarea id="ofertaIn" placeholder="Pegá acá la invitación"></textarea>
-      <button onclick="unirseB()">Generar mi respuesta</button>
+      <div class="titulo">Paso 1 — Escaneá el QR de la invitación</div>
+      <button onclick="abrirCamara('ofertaIn', unirseB)">📷 Escanear invitación</button>
+      <details>
+        <summary class="detalle">o pegar invitación (si no están juntos)</summary>
+        <textarea id="ofertaIn" placeholder="Pegá acá la invitación"></textarea>
+        <button class="btnSec" onclick="unirseB()">Generar mi respuesta</button>
+      </details>
     </div>
     <div id="pasoBResp" class="paso oculto">
-      <div class="titulo">Paso 2 — Tu respuesta</div>
-      <textarea id="respuestaOut" readonly></textarea>
-      <button onclick="copiar('respuestaOut')">Copiar respuesta</button>
+      <div class="titulo">Paso 2 — Mostrale este QR a tu compañero</div>
+      <div class="qrbox" id="qrRespuesta"></div>
+      <details>
+        <summary class="detalle">o enviar por WhatsApp</summary>
+        <textarea id="respuestaOut" readonly></textarea>
+        <button class="btnSec" onclick="copiar('respuestaOut')">Copiar respuesta</button>
+      </details>
     </div>
+  </div>
+
+  <!-- CÁMARA -->
+  <div id="zonaCamara" class="oculto paso">
+    <div class="titulo">Apuntá al QR del otro teléfono</div>
+    <div id="camWrap"><video id="cam" playsinline></video></div>
+    <button class="btnSec" onclick="cerrarCamara()">Cancelar</button>
   </div>
 
   <div id="zonaEstado" class="oculto paso">
@@ -117,13 +150,20 @@ function log(t){ const l=$('log'); l.textContent += "\n" + t; l.scrollTop = l.sc
 function setLog(t){ $('log').textContent = t; }
 function mostrarAviso(t){ const a=$('aviso'); a.textContent=t; a.classList.remove('oculto'); }
 
+function mostrarQR(idCaja, texto) {
+  const caja = $(idCaja);
+  caja.innerHTML = "";
+  new QRCode(caja, { text: texto, width: 240, height: 240, correctLevel: QRCode.CorrectLevel.L });
+}
+
 function crearPC() {
   pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
   let listo = false;
   const terminar = () => {
     if (listo) return; listo = true;
     const code = btoa(JSON.stringify(pc.localDescription));
-    if (esAnfitrion) $('ofertaOut').value = code; else $('respuestaOut').value = code;
+    if (esAnfitrion) { $('ofertaOut').value = code; mostrarQR('qrOferta', code); }
+    else { $('respuestaOut').value = code; mostrarQR('qrRespuesta', code); }
   };
   pc.onicecandidate = (e) => { if (e.candidate === null) terminar(); };
   setTimeout(terminar, 3000);
@@ -131,7 +171,7 @@ function crearPC() {
 function usarCanal(dc) {
   dataChannel = dc;
   dc.onopen = () => {
-    ['elegirRol','flujoA','flujoB'].forEach(id => $(id).classList.add('oculto'));
+    ['elegirRol','flujoA','flujoB','zonaCamara'].forEach(id => $(id).classList.add('oculto'));
     $('zonaEstado').classList.remove('oculto');
     $('zonaJuego').classList.remove('oculto');
     setLog("✅ ¡Conectado!");
@@ -152,14 +192,14 @@ function soyA() {
 }
 function soyB() { $('elegirRol').classList.add('oculto'); $('flujoB').classList.remove('oculto'); }
 async function unirseB() {
-  const txt = $('ofertaIn').value.trim(); if (!txt) { alert("Pegá la invitación"); return; }
+  const txt = $('ofertaIn').value.trim(); if (!txt) { alert("Escaneá o pegá la invitación"); return; }
   crearPC(); pc.ondatachannel = (e) => usarCanal(e.channel);
   await pc.setRemoteDescription(JSON.parse(atob(txt)));
   const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
   $('pasoBResp').classList.remove('oculto');
 }
 async function confirmarA() {
-  const txt = $('respuestaIn').value.trim(); if (!txt) { alert("Pegá la respuesta"); return; }
+  const txt = $('respuestaIn').value.trim(); if (!txt) { alert("Escaneá o pegá la respuesta"); return; }
   await pc.setRemoteDescription(JSON.parse(atob(txt)));
 }
 function copiar(id) { const el=$(id); el.select(); navigator.clipboard.writeText(el.value)
@@ -169,6 +209,46 @@ function reconectar() {
   const g = cargarGuardado();
   if (!g) { alert("No hay partida guardada"); return; }
   if (g.esAnfitrion) soyA(); else soyB();
+}
+
+/* ---------- Cámara / lectura de QR ---------- */
+let camStream = null, camRAF = null, campoDestino = null, callbackTrasEscaneo = null;
+async function abrirCamara(idCampo, callback) {
+  campoDestino = idCampo; callbackTrasEscaneo = callback;
+  $('zonaCamara').classList.remove('oculto');
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    const v = $('cam'); v.srcObject = camStream; await v.play();
+    escanearLoop();
+  } catch(e) {
+    alert("No pude abrir la cámara: " + e.message + "\nPodés usar la opción de pegar el texto.");
+    cerrarCamara();
+  }
+}
+function escanearLoop() {
+  const v = $('cam');
+  if (!camStream) return;
+  if (v.readyState === v.HAVE_ENOUGH_DATA) {
+    const canvas = document.createElement("canvas");
+    canvas.width = v.videoWidth; canvas.height = v.videoHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(img.data, img.width, img.height);
+    if (code && code.data) {
+      $(campoDestino).value = code.data;
+      const cb = callbackTrasEscaneo;
+      cerrarCamara();
+      if (cb) cb();
+      return;
+    }
+  }
+  camRAF = requestAnimationFrame(escanearLoop);
+}
+function cerrarCamara() {
+  if (camRAF) cancelAnimationFrame(camRAF);
+  if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+  $('zonaCamara').classList.add('oculto');
 }
 
 /* ---------- Estado del juego ---------- */
@@ -389,16 +469,13 @@ function soltarEnMano() {
   render(); guardar();
 }
 
-/* ---------- Avisar antes de recargar/cerrar si hay partida ---------- */
+/* ---------- Avisar antes de recargar ---------- */
 window.addEventListener("beforeunload", (e) => {
   const g = cargarGuardado();
-  if (g && g.hayJuego) {
-    e.preventDefault();
-    e.returnValue = "";
-  }
+  if (g && g.hayJuego) { e.preventDefault(); e.returnValue = ""; }
 });
 
-/* ---------- Al cargar la página ---------- */
+/* ---------- Al cargar ---------- */
 window.addEventListener("load", () => {
   const g = cargarGuardado();
   if (g && g.hayJuego) {
