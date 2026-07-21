@@ -3,35 +3,40 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light only">
 <title>Rummikub</title>
 <style>
+  :root { color-scheme: light only; }
   body { font-family: sans-serif; margin:0; padding:10px; background:#1b3d1b; color:#eee; font-size:16px; }
   h2 { margin:6px 0; }
-  textarea { width:100%; height:70px; font-size:13px; box-sizing:border-box; margin:6px 0; }
+  textarea { width:100%; height:70px; font-size:13px; box-sizing:border-box; margin:6px 0; background:#fff; color:#000; }
   button { padding:12px; margin:6px 0; width:100%; font-size:16px; border-radius:8px; border:none; background:#4caf50; color:white; }
   .paso { background:#2a5a2a; padding:12px; border-radius:10px; margin:8px 0; }
-  .titulo { font-weight:bold; font-size:17px; margin-bottom:4px; }
+  .titulo { font-weight:bold; font-size:17px; margin-bottom:4px; color:#fff; }
   .oculto { display:none; }
   #log { background:#000; color:#0f0; padding:8px; font-size:12px; min-height:34px; border-radius:8px; white-space:pre-wrap; }
   .rol { font-size:18px; padding:16px; }
-  /* fichas */
+
   #mano { display:flex; flex-wrap:wrap; gap:5px; background:#0d260d; padding:8px; border-radius:10px; min-height:60px; }
-  .ficha { width:42px; height:56px; background:#f5f0e1; border-radius:6px; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:20px; box-shadow:0 2px 3px rgba(0,0,0,.4); }
+  #tablero { display:grid; grid-template-columns:repeat(8, 1fr); gap:4px; background:#0d3d0d; padding:8px; border-radius:10px; min-height:130px; }
+  .celda { aspect-ratio:3/4; background:rgba(255,255,255,.06); border-radius:6px; }
+  .ficha { width:100%; height:100%; min-width:38px; min-height:52px; background:#f5f0e1; border-radius:6px; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:20px; box-shadow:0 2px 3px rgba(0,0,0,.4); touch-action:none; user-select:none; }
+  #mano .ficha { width:42px; height:56px; }
   .c-rojo{color:#d21b1b;} .c-azul{color:#1b52d2;} .c-negro{color:#111;} .c-naranja{color:#e08a00;}
   .comodin{ color:#c0392b; font-size:24px; }
+  .arrastrando { opacity:.5; }
+  .celda.resaltada { background:rgba(255,255,0,.35); }
 </style>
 </head>
 <body>
   <h2>Rummikub</h2>
 
-  <!-- Elegir rol -->
   <div id="elegirRol" class="paso">
     <div class="titulo">¿Quién sos?</div>
     <button class="rol" onclick="soyA()">Soy el ANFITRIÓN (reparto yo)</button>
     <button class="rol" onclick="soyB()">Me UNO a la partida</button>
   </div>
 
-  <!-- FLUJO A -->
   <div id="flujoA" class="oculto">
     <div class="paso">
       <div class="titulo">Paso 1 — Tu invitación</div>
@@ -46,7 +51,6 @@
     </div>
   </div>
 
-  <!-- FLUJO B -->
   <div id="flujoB" class="oculto">
     <div class="paso">
       <div class="titulo">Paso 1 — La invitación</div>
@@ -60,21 +64,23 @@
     </div>
   </div>
 
-  <!-- ESTADO -->
   <div id="zonaEstado" class="oculto paso">
     <div id="log">Esperando conexión...</div>
   </div>
 
-  <!-- JUEGO -->
   <div id="zonaJuego" class="oculto">
     <div class="paso">
-      <div class="titulo">Tu mano (<span id="cuenta">0</span> fichas) · Pozo: <span id="pozo">0</span></div>
+      <div class="titulo">Tablero común</div>
+      <div id="tablero"></div>
+    </div>
+    <div class="paso">
+      <div class="titulo">Tu mano (<span id="cuenta">0</span>) · Pozo: <span id="pozo">0</span></div>
       <div id="mano"></div>
     </div>
   </div>
 
 <script>
-/* ---------- Conexión P2P (ya probada) ---------- */
+/* ---------- Conexión P2P ---------- */
 let pc, dataChannel, esAnfitrion = false;
 const $ = (id) => document.getElementById(id);
 const log = (t) => { $('log').textContent = t; };
@@ -90,13 +96,10 @@ function crearPC() {
   pc.onicecandidate = (e) => { if (e.candidate === null) terminar(); };
   setTimeout(terminar, 3000);
 }
-
 function conectarCanal(dc) {
   dataChannel = dc;
   dc.onopen = () => {
-    $('elegirRol').classList.add('oculto');
-    $('flujoA').classList.add('oculto');
-    $('flujoB').classList.add('oculto');
+    ['elegirRol','flujoA','flujoB'].forEach(id => $(id).classList.add('oculto'));
     $('zonaEstado').classList.remove('oculto');
     $('zonaJuego').classList.remove('oculto');
     log("✅ ¡Conectado!");
@@ -110,7 +113,6 @@ function enviar(obj) { if (dataChannel && dataChannel.readyState === "open") dat
 function soyA() { esAnfitrion = true; $('elegirRol').classList.add('oculto'); $('flujoA').classList.remove('oculto');
   crearPC(); conectarCanal(pc.createDataChannel("juego")); pc.createOffer().then(o => pc.setLocalDescription(o)); }
 function soyB() { $('elegirRol').classList.add('oculto'); $('flujoB').classList.remove('oculto'); }
-
 async function unirseB() {
   const txt = $('ofertaIn').value.trim(); if (!txt) { alert("Pegá la invitación"); return; }
   crearPC(); pc.ondatachannel = (e) => conectarCanal(e.channel);
@@ -125,72 +127,120 @@ async function confirmarA() {
 function copiar(id) { const el=$(id); el.select(); navigator.clipboard.writeText(el.value)
   .then(()=>alert("¡Copiado!"), ()=>{document.execCommand('copy');alert("¡Copiado!");}); }
 
-/* ---------- Juego: mazo y reparto ---------- */
+/* ---------- Juego ---------- */
 const COLORES = ["rojo","azul","negro","naranja"];
+const CELDAS_TABLERO = 32; // 8 columnas x 4 filas
 let miMano = [], fichasEnPozo = 0;
+let tablero = new Array(CELDAS_TABLERO).fill(null); // cada celda: null o una ficha
 
 function crearMazo() {
-  const mazo = [];
-  let id = 0;
-  for (let copia = 0; copia < 2; copia++)
+  const mazo = []; let id = 0;
+  for (let c = 0; c < 2; c++)
     for (const color of COLORES)
-      for (let num = 1; num <= 13; num++)
-        mazo.push({ id: id++, num, color });
-  mazo.push({ id: id++, comodin: true });
-  mazo.push({ id: id++, comodin: true });
+      for (let num = 1; num <= 13; num++) mazo.push({ id:id++, num, color });
+  mazo.push({ id:id++, comodin:true }); mazo.push({ id:id++, comodin:true });
   return mazo;
 }
-function mezclar(a) {
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
+function mezclar(a){ for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
 
-// Solo el anfitrión reparte
 function repartir() {
   const mazo = mezclar(crearMazo());
-  const manoA = mazo.splice(0, 14);
-  const manoB = mazo.splice(0, 14);
-  fichasEnPozo = mazo.length;              // el resto queda en el pozo
-  // le mando a B su mano y el tamaño del pozo
-  enviar({ tipo: "reparto", mano: manoB, pozo: fichasEnPozo });
-  // yo me quedo con la mía
-  miMano = manoA;
-  render();
+  const manoA = mazo.splice(0,14);
+  const manoB = mazo.splice(0,14);
+  fichasEnPozo = mazo.length;
+  enviar({ tipo:"reparto", mano:manoB, pozo:fichasEnPozo });
+  miMano = manoA; render();
 }
-
 function manejarMensaje(msg) {
-  if (msg.tipo === "reparto") {
-    miMano = msg.mano;
-    fichasEnPozo = msg.pozo;
-    render();
-  }
+  if (msg.tipo === "reparto") { miMano = msg.mano; fichasEnPozo = msg.pozo; render(); }
+  else if (msg.tipo === "tablero") { tablero = msg.tablero; renderTablero(); }
 }
+function sincronizarTablero() { enviar({ tipo:"tablero", tablero }); }
 
-/* ---------- Dibujar la mano ---------- */
+/* ---------- Render ---------- */
 function ordenarMano() {
-  miMano.sort((a, b) => {
-    if (a.comodin) return 1;
-    if (b.comodin) return -1;
-    if (a.color !== b.color) return COLORES.indexOf(a.color) - COLORES.indexOf(b.color);
-    return a.num - b.num;
-  });
+  miMano.sort((a,b)=>{ if(a.comodin)return 1; if(b.comodin)return -1;
+    if(a.color!==b.color)return COLORES.indexOf(a.color)-COLORES.indexOf(b.color); return a.num-b.num; });
 }
-function render() {
+function crearFichaDiv(f) {
+  const div = document.createElement("div");
+  div.className = "ficha";
+  if (f.comodin){ div.classList.add("comodin"); div.textContent="★"; }
+  else { div.classList.add("c-"+f.color); div.textContent=f.num; }
+  div.dataset.fid = f.id;
+  hacerArrastrable(div, f);
+  return div;
+}
+function render(){ renderMano(); renderTablero(); }
+function renderMano() {
   ordenarMano();
-  const cont = $('mano');
-  cont.innerHTML = "";
-  for (const f of miMano) {
-    const div = document.createElement("div");
-    div.className = "ficha";
-    if (f.comodin) { div.classList.add("comodin"); div.textContent = "★"; }
-    else { div.classList.add("c-" + f.color); div.textContent = f.num; }
-    cont.appendChild(div);
-  }
+  const cont=$('mano'); cont.innerHTML="";
+  for(const f of miMano){ const d=crearFichaDiv(f); d.dataset.origen="mano"; cont.appendChild(d); }
   $('cuenta').textContent = miMano.length;
   $('pozo').textContent = fichasEnPozo;
+}
+function renderTablero() {
+  const cont=$('tablero'); cont.innerHTML="";
+  for(let i=0;i<CELDAS_TABLERO;i++){
+    const celda=document.createElement("div");
+    celda.className="celda"; celda.dataset.celda=i;
+    const f=tablero[i];
+    if(f){ const d=crearFichaDiv(f); d.dataset.origen="tablero"; d.dataset.celdaOrigen=i; celda.appendChild(d); }
+    cont.appendChild(celda);
+  }
+}
+
+/* ---------- Arrastre con el dedo ---------- */
+let arrastre = null;
+function hacerArrastrable(div, ficha) {
+  div.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    const rect = div.getBoundingClientRect();
+    const fantasma = div.cloneNode(true);
+    fantasma.style.position="fixed"; fantasma.style.zIndex=1000; fantasma.style.pointerEvents="none";
+    fantasma.style.width=rect.width+"px"; fantasma.style.height=rect.height+"px";
+    fantasma.style.left=rect.left+"px"; fantasma.style.top=rect.top+"px";
+    document.body.appendChild(fantasma);
+    div.classList.add("arrastrando");
+    arrastre = { ficha, div, fantasma, offX:e.clientX-rect.left, offY:e.clientY-rect.top,
+                 origen:div.dataset.origen, celdaOrigen:div.dataset.celdaOrigen };
+    div.setPointerCapture(e.pointerId);
+  });
+  div.addEventListener("pointermove", (e) => {
+    if(!arrastre) return;
+    arrastre.fantasma.style.left=(e.clientX-arrastre.offX)+"px";
+    arrastre.fantasma.style.top=(e.clientY-arrastre.offY)+"px";
+    document.querySelectorAll(".celda.resaltada").forEach(c=>c.classList.remove("resaltada"));
+    const celda = celdaBajoPunto(e.clientX, e.clientY);
+    if(celda) celda.classList.add("resaltada");
+  });
+  div.addEventListener("pointerup", (e) => {
+    if(!arrastre) return;
+    const celda = celdaBajoPunto(e.clientX, e.clientY);
+    arrastre.fantasma.remove();
+    arrastre.div.classList.remove("arrastrando");
+    document.querySelectorAll(".celda.resaltada").forEach(c=>c.classList.remove("resaltada"));
+    if(celda) soltarEnCelda(parseInt(celda.dataset.celda));
+    arrastre = null;
+  });
+}
+function celdaBajoPunto(x,y){
+  const el=document.elementFromPoint(x,y);
+  return el ? el.closest(".celda") : null;
+}
+function soltarEnCelda(destino) {
+  if (tablero[destino]) return; // celda ocupada, no hago nada
+  const f = arrastre.ficha;
+  if (arrastre.origen === "mano") {
+    miMano = miMano.filter(x => x.id !== f.id);
+    tablero[destino] = f;
+  } else { // venía del tablero
+    const orig = parseInt(arrastre.celdaOrigen);
+    tablero[orig] = null;
+    tablero[destino] = f;
+  }
+  render();
+  sincronizarTablero();
 }
 </script>
 </body>
