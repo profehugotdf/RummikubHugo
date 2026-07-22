@@ -37,12 +37,10 @@
   details summary { cursor:pointer; padding:6px 0; }
   #cam { width:100%; border-radius:8px; background:#000; }
 
-  /* ---- MESA 20 x 8 ---- */
   #mesa { display:grid; grid-template-columns:repeat(20, 1fr); gap:1px; background:#0d3d0d; padding:4px; border-radius:8px; }
   #mesa .celda { aspect-ratio:3/4; background:rgba(255,255,255,.05); border-radius:2px; }
   #mesa .ficha { font-size:clamp(6px, 2.05vw, 15px); border-radius:2px; box-shadow:0 1px 1px rgba(0,0,0,.4); }
 
-  /* ---- ATRIL 10 x 3 ---- */
   #atril { display:grid; grid-template-columns:repeat(10, 1fr); gap:3px; background:#0d260d; padding:5px; border-radius:8px; }
   #atril .celda { aspect-ratio:3/4; background:rgba(255,255,255,.07); border-radius:4px; }
   #atril .ficha { font-size:clamp(11px, 3.6vw, 22px); border-radius:4px; box-shadow:0 2px 3px rgba(0,0,0,.45); }
@@ -146,9 +144,9 @@
 
 <script>
 /* ---------- Persistencia ---------- */
-const CLAVE = "rummikub_estado_v2";
+const CLAVE = "rummikub_estado_v3";
 function guardar() {
-  try { localStorage.setItem(CLAVE, JSON.stringify({ atril, fichasEnPozo, mesa, esMiTurno, esAnfitrion, yaAbri, pozoReal, hayJuego:true })); } catch(e){}
+  try { localStorage.setItem(CLAVE, JSON.stringify({ atril, fichasEnPozo, mesa, turnoDe, numeroTurno, esAnfitrion, yaAbri, pozoReal, hayJuego:true })); } catch(e){}
 }
 function cargarGuardado() { try { const s=localStorage.getItem(CLAVE); return s?JSON.parse(s):null; } catch(e){ return null; } }
 function borrarPartida() {
@@ -239,8 +237,14 @@ const VEL_REPLAY=400;
 let atril=new Array(ATRIL_CELDAS).fill(null);
 let mesa=new Array(MESA_CELDAS).fill(null);
 let pozoReal=[], fichasEnPozo=0;
-let esMiTurno=false, reproduciendo=false, recuperado=false, yaAbri=false;
+let turnoDe=null;            // "A" o "B" — dueño explícito del turno
+let numeroTurno=0;           // solo sube; gana el más alto al sincronizar
+let reproduciendo=false, recuperado=false, yaAbri=false;
 let atrilInicioTurno=null, mesaInicioTurno=null, movimientos=[];
+
+function miId(){ return esAnfitrion ? "A" : "B"; }
+function rivalId(){ return esAnfitrion ? "B" : "A"; }
+function esMiTurno(){ return turnoDe === miId(); }
 
 function fichasAtril(){ return atril.filter(x=>x); }
 function crearMazo(){
@@ -255,39 +259,56 @@ function repartir(){
   const mazo=mezclar(crearMazo());
   const mA=mazo.splice(0,14), mB=mazo.splice(0,14);
   pozoReal=mazo; fichasEnPozo=pozoReal.length;
-  const anfitrionEmpieza=Math.random()<0.5;
-  enviar({tipo:"reparto",mano:mB,pozo:fichasEnPozo,rivalEmpieza:anfitrionEmpieza});
+  turnoDe = Math.random()<0.5 ? "A" : "B";
+  numeroTurno = 1;
+  enviar({tipo:"reparto",mano:mB,pozo:fichasEnPozo,turnoDe,numeroTurno});
   atril=new Array(ATRIL_CELDAS).fill(null); mA.forEach(f=>ponerEnAtril(f));
-  esMiTurno=anfitrionEmpieza; yaAbri=false;
+  yaAbri=false;
   ordenarAtril(true); iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
 }
+
 function manejarMensaje(msg){
   if(msg.tipo==="reparto"){
     atril=new Array(ATRIL_CELDAS).fill(null); msg.mano.forEach(f=>ponerEnAtril(f));
-    fichasEnPozo=msg.pozo; esMiTurno=msg.rivalEmpieza; yaAbri=false;
+    fichasEnPozo=msg.pozo; turnoDe=msg.turnoDe; numeroTurno=msg.numeroTurno; yaAbri=false;
     ordenarAtril(true); iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
   }
   else if(msg.tipo==="jugada"){ reproducirJugada(msg); }
   else if(msg.tipo==="pedirFicha"){
     if(esAnfitrion){
       const f=pozoReal.shift()||null; fichasEnPozo=pozoReal.length;
-      enviar({tipo:"fichaRobada",ficha:f,pozo:fichasEnPozo});
-      esMiTurno=true; iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
+      turnoDe="A"; numeroTurno++;
+      enviar({tipo:"fichaRobada",ficha:f,pozo:fichasEnPozo,turnoDe,numeroTurno});
+      iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
     }
   }
   else if(msg.tipo==="fichaRobada"){
     if(msg.ficha) ponerEnAtril(msg.ficha);
-    fichasEnPozo=msg.pozo; esMiTurno=false; render(); actualizarUI(); guardar();
+    fichasEnPozo=msg.pozo; turnoDe=msg.turnoDe; numeroTurno=msg.numeroTurno;
+    render(); actualizarUI(); guardar();
   }
-  else if(msg.tipo==="pedirEstado"){ enviar({tipo:"estado",mesa,pozo:fichasEnPozo,turnoDelQueResponde:esMiTurno}); }
+  else if(msg.tipo==="pedirEstado"){
+    enviar({tipo:"estado",mesa,pozo:fichasEnPozo,turnoDe,numeroTurno});
+  }
   else if(msg.tipo==="estado"){
     if(reproduciendo) return;
-    mesa=msg.mesa; fichasEnPozo=msg.pozo; esMiTurno=!msg.turnoDelQueResponde;
-    iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar(); log("🔄 Sincronizado con el rival.");
+    // gana siempre el número de turno más alto; si empatan, no piso nada
+    if(msg.numeroTurno > numeroTurno){
+      mesa=msg.mesa; fichasEnPozo=msg.pozo; turnoDe=msg.turnoDe; numeroTurno=msg.numeroTurno;
+      iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
+      log("🔄 Sincronizado (turno "+numeroTurno+").");
+    } else if(msg.numeroTurno===numeroTurno && turnoDe!==msg.turnoDe){
+      // desacuerdo con mismo número: manda el anfitrión
+      if(!esAnfitrion){ turnoDe=msg.turnoDe; mesa=msg.mesa; fichasEnPozo=msg.pozo;
+        iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar(); log("🔄 Turno corregido por el anfitrión."); }
+      else { enviar({tipo:"estado",mesa,pozo:fichasEnPozo,turnoDe,numeroTurno}); }
+    }
   }
 }
+function pedirEstado(){ if(!canalAbierto()){ mostrarAviso("No hay conexión activa. Recargá y tocá 'Reconectar'."); return; } enviar({tipo:"pedirEstado"}); }
+
 function iniciarTurnoSiCorresponde(){
-  if(esMiTurno){ atrilInicioTurno=JSON.parse(JSON.stringify(atril)); mesaInicioTurno=JSON.parse(JSON.stringify(mesa)); movimientos=[]; }
+  if(esMiTurno()){ atrilInicioTurno=JSON.parse(JSON.stringify(atril)); mesaInicioTurno=JSON.parse(JSON.stringify(mesa)); movimientos=[]; }
 }
 
 /* ---------- Ordenar atril ---------- */
@@ -343,12 +364,12 @@ function validarJugada(){
 
 /* ---------- Turno ---------- */
 function deshacer(){
-  if(!esMiTurno) return;
+  if(!esMiTurno()) return;
   atril=JSON.parse(JSON.stringify(atrilInicioTurno)); mesa=JSON.parse(JSON.stringify(mesaInicioTurno)); movimientos=[];
   limpiarValidacion(); render(); guardar();
 }
 function enviarJugada(){
-  if(!esMiTurno) return;
+  if(!esMiTurno()) return;
   const huboMesa = movimientos.some(m=>m.destino!=null||m.origenMesa!=null);
   if(!huboMesa){ mostrarValidacion(false,"No bajaste ninguna ficha. Usá 'Robar del pozo y pasar'."); return; }
   const v=validarJugada();
@@ -356,23 +377,24 @@ function enviarJugada(){
   if(!yaAbri) yaAbri=true;
   limpiarValidacion();
   const gano = fichasAtril().length===0;
-  enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos,gano});
-  esMiTurno=false; actualizarUI(); guardar();
+  turnoDe = rivalId(); numeroTurno++;
+  enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos,gano,turnoDe,numeroTurno});
+  actualizarUI(); guardar();
   if(gano) finPartida(true);
 }
 function robar(){
-  if(!esMiTurno) return;
+  if(!esMiTurno()) return;
   if(fichasEnPozo<=0){ alert("El pozo está vacío"); return; }
   atril=JSON.parse(JSON.stringify(atrilInicioTurno)); mesa=JSON.parse(JSON.stringify(mesaInicioTurno)); movimientos=[];
   limpiarValidacion();
   if(esAnfitrion){
     const f=pozoReal.shift()||null; if(f) ponerEnAtril(f);
     fichasEnPozo=pozoReal.length;
-    enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos:[],robo:true});
-    esMiTurno=false; render(); actualizarUI(); guardar();
-  } else { enviar({tipo:"pedirFicha"}); }
+    turnoDe="B"; numeroTurno++;
+    enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos:[],robo:true,turnoDe,numeroTurno});
+    render(); actualizarUI(); guardar();
+  } else { enviar({tipo:"pedirFicha"}); log("⏳ Pidiendo ficha..."); }
 }
-function pedirEstado(){ if(!canalAbierto()){ mostrarAviso("No hay conexión activa. Recargá y tocá 'Reconectar'."); return; } enviar({tipo:"pedirEstado"}); }
 function mostrarValidacion(ok,t){ const m=$('msgValidacion'); m.textContent=t; m.className=ok?"bueno":"malo"; m.classList.remove('oculto'); }
 function limpiarValidacion(){ $('msgValidacion').classList.add('oculto'); document.querySelectorAll('.celda.invalida').forEach(c=>c.classList.remove('invalida')); }
 function resaltarInvalidas(cs){ document.querySelectorAll('.celda.invalida').forEach(c=>c.classList.remove('invalida'));
@@ -392,9 +414,11 @@ async function reproducirJugada(msg){
       if(c) c.classList.remove("replay");
     }
   }
-  mesa=msg.mesa; fichasEnPozo=msg.pozo; reproduciendo=false;
+  mesa=msg.mesa; fichasEnPozo=msg.pozo;
+  turnoDe=msg.turnoDe; numeroTurno=msg.numeroTurno;
+  reproduciendo=false;
   if(msg.gano){ render(); actualizarUI(); finPartida(false); return; }
-  esMiTurno=true; iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
+  iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
 }
 function esperar(ms){ return new Promise(r=>setTimeout(r,ms)); }
 function finPartida(gane){
@@ -407,10 +431,10 @@ function finPartida(gane){
 function actualizarUI(){
   const e=$('estadoTurno');
   if(reproduciendo){ e.textContent="👀 Mirando la jugada del rival..."; e.className="turnoRival"; }
-  else if(esMiTurno){ e.textContent="🟢 Tu turno"; e.className="miTurno"; }
+  else if(esMiTurno()){ e.textContent="🟢 Tu turno"; e.className="miTurno"; }
   else { e.textContent="⏳ Turno del rival"; e.className="turnoRival"; }
   $('abierto').textContent = yaAbri?"· ✅ abierto":"· 🔒 falta abrir (30)";
-  const bloq=!esMiTurno||reproduciendo;
+  const bloq=!esMiTurno()||reproduciendo;
   $('btnDeshacer').disabled=bloq; $('btnEnviar').disabled=bloq; $('btnRobar').disabled=bloq;
   $('mesa').classList.toggle('bloqueado',bloq);
 }
@@ -449,7 +473,7 @@ let arrastre=null;
 function hacerArrastrable(div,ficha){
   div.addEventListener("pointerdown",(e)=>{
     if(reproduciendo) return;
-    if(div.dataset.origen==="mesa" && !esMiTurno) return;
+    if(div.dataset.origen==="mesa" && !esMiTurno()) return;
     e.preventDefault();
     const r=div.getBoundingClientRect(); const fant=div.cloneNode(true);
     fant.style.position="fixed"; fant.style.zIndex=1000; fant.style.pointerEvents="none";
@@ -482,38 +506,30 @@ function celdaBajoPunto(x,y){ const el=document.elementFromPoint(x,y); return el
 function soltar(zona,destino){
   const f=arrastre.ficha, orig=arrastre.celdaOrigen, desde=arrastre.origen;
   if(zona==="mesa"){
-    if(!esMiTurno) return;
+    if(!esMiTurno()) return;
     if(mesa[destino]) return;
     if(desde==="atril"){ atril[orig]=null; mesa[destino]=f; movimientos.push({ficha:f,destino,desdeAtril:true}); }
     else { if(orig===destino) return; mesa[orig]=null; mesa[destino]=f; movimientos.push({ficha:f,destino,origenMesa:orig}); }
-  } else { // atril
+  } else {
     if(atril[destino]) return;
     if(desde==="atril"){ atril[orig]=null; atril[destino]=f; }
-    else { if(!esMiTurno) return; mesa[orig]=null; atril[destino]=f; movimientos.push({ficha:f,aAtril:true,origenMesa:orig}); }
+    else { if(!esMiTurno()) return; mesa[orig]=null; atril[destino]=f; movimientos.push({ficha:f,aAtril:true,origenMesa:orig}); }
   }
   limpiarValidacion(); render(); guardar();
 }
 
 /* ---------- Volver de segundo plano ---------- */
+let ultimoPedido=0;
 document.addEventListener("visibilitychange",()=>{
   if(document.visibilityState==="visible"){
     pedirWakeLock();
-    if(canalAbierto()){ enviar({tipo:"pedirEstado"}); log("🔄 Volviendo... pidiendo estado"); }
-    else if(cargarGuardado()){ mostrarAviso("La conexión se cortó mientras estabas afuera. Recargá y tocá 'Reconectar'."); }
+    const ahora=Date.now();
+    if(ahora-ultimoPedido<3000) return;   // evita ráfagas de pedidos
+    ultimoPedido=ahora;
+    if(canalAbierto()) enviar({tipo:"pedirEstado"});
+    else if(cargarGuardado()) mostrarAviso("La conexión se cortó mientras estabas afuera. Recargá y tocá 'Reconectar'.");
   }
 });
 window.addEventListener("beforeunload",(e)=>{ const g=cargarGuardado(); if(g&&g.hayJuego){ e.preventDefault(); e.returnValue=""; } });
 window.addEventListener("load",()=>{
-  const g=cargarGuardado();
-  if(g&&g.hayJuego){
-    atril=g.atril||new Array(ATRIL_CELDAS).fill(null);
-    mesa=g.mesa||new Array(MESA_CELDAS).fill(null);
-    fichasEnPozo=g.fichasEnPozo; esMiTurno=g.esMiTurno; esAnfitrion=g.esAnfitrion; yaAbri=!!g.yaAbri; pozoReal=g.pozoReal||[]; recuperado=true;
-    atrilInicioTurno=JSON.parse(JSON.stringify(atril)); mesaInicioTurno=JSON.parse(JSON.stringify(mesa));
-    mostrarAviso("Se recuperó tu partida. Tocá 'Reconectar' para volver a unirte.");
-    $('btnReconectar').classList.remove('oculto'); $('btnBorrar').classList.remove('oculto');
-  }
-});
-</script>
-</body>
-</html>
+  const g=cargarGuarda
