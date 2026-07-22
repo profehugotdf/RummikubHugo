@@ -39,14 +39,14 @@
 
   #mesa { display:grid; grid-template-columns:repeat(20, 1fr); gap:1px; background:#0d3d0d; padding:4px; border-radius:8px; }
   #mesa .celda { aspect-ratio:3/4; background:rgba(255,255,255,.05); border-radius:2px; }
-  #mesa .ficha { font-size:clamp(6px, 2.05vw, 15px); border-radius:2px; box-shadow:0 1px 1px rgba(0,0,0,.4); }
+  #mesa .ficha { font-size:clamp(8px, 2.6vw, 19px); font-weight:900; border-radius:2px; box-shadow:0 1px 1px rgba(0,0,0,.4); }
 
   #atril { display:grid; grid-template-columns:repeat(10, 1fr); gap:3px; background:#0d260d; padding:5px; border-radius:8px; }
   #atril .celda { aspect-ratio:3/4; background:rgba(255,255,255,.07); border-radius:4px; }
-  #atril .ficha { font-size:clamp(11px, 3.6vw, 22px); border-radius:4px; box-shadow:0 2px 3px rgba(0,0,0,.45); }
+  #atril .ficha { font-size:clamp(14px, 4.4vw, 27px); font-weight:900; border-radius:4px; box-shadow:0 2px 3px rgba(0,0,0,.45); }
 
   .celda { position:relative; }
-  .ficha { width:100%; height:100%; background:#f5f0e1 !important; display:flex; align-items:center; justify-content:center; font-weight:bold; touch-action:none; user-select:none; }
+  .ficha { width:100%; height:100%; background:#f5f0e1 !important; display:flex; align-items:center; justify-content:center; font-weight:900; touch-action:none; user-select:none; }
   .c-rojo{color:#d21b1b !important;} .c-azul{color:#1b52d2 !important;} .c-negro{color:#111 !important;} .c-naranja{color:#e08a00 !important;}
   .comodin{ color:#c0392b !important; }
   .arrastrando { opacity:.4; }
@@ -56,8 +56,14 @@
   .bloqueado { pointer-events:none; opacity:.9; }
 
   @media (orientation: landscape) {
-    #mesa .ficha { font-size:clamp(8px, 1.15vw, 18px); }
-    #atril .ficha { font-size:clamp(12px, 1.9vw, 24px); }
+    #zonaJuego { display:grid; grid-template-columns: 1fr 340px; gap:8px; align-items:start; }
+    #zonaJuego #estadoTurno { grid-column: 1 / -1; }
+    #zonaJuego #msgValidacion { grid-column: 1 / -1; }
+    #zonaJuego > .paso:nth-of-type(1) { grid-column: 1; }
+    #zonaJuego > .paso:nth-of-type(2) { grid-column: 2; }
+    #mesa .ficha { font-size:clamp(8px, 1.3vw, 20px); }
+    #atril { grid-template-columns:repeat(5, 1fr); }
+    #atril .ficha { font-size:clamp(14px, 2.4vw, 26px); }
   }
 </style>
 </head>
@@ -237,8 +243,7 @@ const VEL_REPLAY=400;
 let atril=new Array(ATRIL_CELDAS).fill(null);
 let mesa=new Array(MESA_CELDAS).fill(null);
 let pozoReal=[], fichasEnPozo=0;
-let turnoDe=null;            // "A" o "B" — dueño explícito del turno
-let numeroTurno=0;           // solo sube; gana el más alto al sincronizar
+let turnoDe=null, numeroTurno=0;
 let reproduciendo=false, recuperado=false, yaAbri=false;
 let atrilInicioTurno=null, mesaInicioTurno=null, movimientos=[];
 
@@ -292,13 +297,11 @@ function manejarMensaje(msg){
   }
   else if(msg.tipo==="estado"){
     if(reproduciendo) return;
-    // gana siempre el número de turno más alto; si empatan, no piso nada
     if(msg.numeroTurno > numeroTurno){
       mesa=msg.mesa; fichasEnPozo=msg.pozo; turnoDe=msg.turnoDe; numeroTurno=msg.numeroTurno;
       iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
       log("🔄 Sincronizado (turno "+numeroTurno+").");
     } else if(msg.numeroTurno===numeroTurno && turnoDe!==msg.turnoDe){
-      // desacuerdo con mismo número: manda el anfitrión
       if(!esAnfitrion){ turnoDe=msg.turnoDe; mesa=msg.mesa; fichasEnPozo=msg.pozo;
         iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar(); log("🔄 Turno corregido por el anfitrión."); }
       else { enviar({tipo:"estado",mesa,pozo:fichasEnPozo,turnoDe,numeroTurno}); }
@@ -470,11 +473,17 @@ function renderAtril(){
 
 /* ---------- Arrastre ---------- */
 let arrastre=null;
+function celdaBajoPunto(x,y){ const el=document.elementFromPoint(x,y); return el?el.closest(".celda"):null; }
+function limpiarFantasmas(){
+  document.querySelectorAll("body > .ficha").forEach(f=>f.remove());
+  document.querySelectorAll(".ficha.arrastrando").forEach(f=>f.classList.remove("arrastrando"));
+}
 function hacerArrastrable(div,ficha){
   div.addEventListener("pointerdown",(e)=>{
     if(reproduciendo) return;
     if(div.dataset.origen==="mesa" && !esMiTurno()) return;
     e.preventDefault();
+    limpiarFantasmas();
     const r=div.getBoundingClientRect(); const fant=div.cloneNode(true);
     fant.style.position="fixed"; fant.style.zIndex=1000; fant.style.pointerEvents="none";
     fant.style.width=Math.max(r.width,34)+"px"; fant.style.height=Math.max(r.height,46)+"px";
@@ -492,16 +501,17 @@ function hacerArrastrable(div,ficha){
     document.querySelectorAll(".celda.resaltada").forEach(c=>c.classList.remove("resaltada"));
     const c=celdaBajoPunto(e.clientX,e.clientY); if(c) c.classList.add("resaltada");
   });
-  div.addEventListener("pointerup",(e)=>{
+  const finArrastre=(e)=>{
     if(!arrastre) return;
     const cel=celdaBajoPunto(e.clientX,e.clientY);
-    arrastre.fantasma.remove(); arrastre.div.classList.remove("arrastrando");
+    limpiarFantasmas();
     document.querySelectorAll(".celda.resaltada").forEach(c=>c.classList.remove("resaltada"));
     if(cel) soltar(cel.dataset.zona, parseInt(cel.dataset.celda));
     arrastre=null;
-  });
+  };
+  div.addEventListener("pointerup", finArrastre);
+  div.addEventListener("pointercancel",()=>{ limpiarFantasmas(); document.querySelectorAll(".celda.resaltada").forEach(c=>c.classList.remove("resaltada")); arrastre=null; });
 }
-function celdaBajoPunto(x,y){ const el=document.elementFromPoint(x,y); return el?el.closest(".celda"):null; }
 
 function soltar(zona,destino){
   const f=arrastre.ficha, orig=arrastre.celdaOrigen, desde=arrastre.origen;
@@ -523,8 +533,9 @@ let ultimoPedido=0;
 document.addEventListener("visibilitychange",()=>{
   if(document.visibilityState==="visible"){
     pedirWakeLock();
+    limpiarFantasmas();
     const ahora=Date.now();
-    if(ahora-ultimoPedido<3000) return;   // evita ráfagas de pedidos
+    if(ahora-ultimoPedido<3000) return;
     ultimoPedido=ahora;
     if(canalAbierto()) enviar({tipo:"pedirEstado"});
     else if(cargarGuardado()) mostrarAviso("La conexión se cortó mientras estabas afuera. Recargá y tocá 'Reconectar'.");
