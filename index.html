@@ -53,6 +53,7 @@
   .celda.resaltada { background:rgba(255,255,0,.4); }
   .celda.replay { background:rgba(0,150,255,.5); }
   .celda.invalida { background:rgba(255,0,0,.5); }
+  .celda.nueva { outline:2px solid #00e5ff; }
   .bloqueado { pointer-events:none; opacity:.9; }
 
   @media (orientation: landscape) {
@@ -350,17 +351,37 @@ function esEscalera(fs){
   return true;
 }
 function bloqueValido(fs){ return esGrupo(fs)||esEscalera(fs); }
-function valorApertura(){ let s=0; for(const m of movimientos){ if(m.desdeAtril&&m.ficha&&!m.ficha.comodin) s+=m.ficha.num; } return s; }
 
 function validarJugada(){
-  for(const b of obtenerBloques(mesa)){
-    if(!bloqueValido(b)) return {ok:false,motivo:"Hay un grupo/escalera inválido en la mesa.",celdas:b.map(x=>x.idx)};
-  }
+  const bloques = obtenerBloques(mesa);
+  const idsNuevos = new Set();
+  for(const m of movimientos){ if(m.desdeAtril && m.ficha) idsNuevos.add(m.ficha.id); }
+
+  // bloques que contienen alguna ficha nueva de este turno
+  const bloquesTocados = bloques.filter(b => b.some(x => idsNuevos.has(x.ficha.id)));
+
   if(!yaAbri){
+    // APERTURA: no se puede tocar la mesa previa
     if(movimientos.some(m=>m.origenMesa!=null))
       return {ok:false,motivo:"En la apertura solo podés bajar fichas de tu atril, sin tocar la mesa."};
-    const s=valorApertura();
-    if(s<30) return {ok:false,motivo:"Tu apertura debe sumar al menos 30 (bajaste "+s+")."};
+    if(bloquesTocados.length===0)
+      return {ok:false,motivo:"No bajaste ninguna ficha a la mesa."};
+    // cada bloque nuevo debe ser válido y no mezclarse con fichas viejas; suma total 30+
+    let suma=0;
+    for(const b of bloquesTocados){
+      if(b.some(x=>!idsNuevos.has(x.ficha.id)))
+        return {ok:false,motivo:"Una jugada quedó pegada a otra de la mesa. Separala con una celda vacía o ponela en otra fila.",celdas:b.map(x=>x.idx)};
+      if(!bloqueValido(b))
+        return {ok:false,motivo:"Hay un grupo/escalera inválido en tu apertura.",celdas:b.map(x=>x.idx)};
+      for(const x of b){ if(!x.ficha.comodin) suma+=x.ficha.num; }
+    }
+    if(suma<30) return {ok:false,motivo:"Tu apertura debe sumar al menos 30 entre todas tus jugadas (suma "+suma+")."};
+    return {ok:true};
+  }
+
+  // YA ABRIÓ: todos los bloques tocados deben ser válidos
+  for(const b of bloquesTocados){
+    if(!bloqueValido(b)) return {ok:false,motivo:"Hay un grupo/escalera inválido.",celdas:b.map(x=>x.idx)};
   }
   return {ok:true};
 }
@@ -452,10 +473,13 @@ function crearFichaDiv(f){
 function render(){ renderAtril(); renderMesa(); }
 function renderMesa(){
   const c=$('mesa'); c.innerHTML="";
+  const idsNuevos = new Set();
+  for(const m of movimientos){ if(m.desdeAtril && m.ficha) idsNuevos.add(m.ficha.id); }
   for(let i=0;i<MESA_CELDAS;i++){
     const cel=document.createElement("div"); cel.className="celda"; cel.dataset.celda=i; cel.dataset.zona="mesa";
     const f=mesa[i];
-    if(f){ const d=crearFichaDiv(f); d.dataset.origen="mesa"; d.dataset.celdaOrigen=i; cel.appendChild(d); }
+    if(f){ const d=crearFichaDiv(f); d.dataset.origen="mesa"; d.dataset.celdaOrigen=i; cel.appendChild(d);
+      if(idsNuevos.has(f.id)) cel.classList.add("nueva"); }
     c.appendChild(cel);
   }
 }
