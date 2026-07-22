@@ -29,6 +29,7 @@
   .botonera { display:flex; gap:8px; }
   .botonera button { margin:6px 0; }
   #btnDeshacer { background:#c0392b; }
+  #btnSincronizar { background:#00695c; font-size:14px; padding:8px; }
   #aviso { background:#1565c0; color:#fff; padding:10px; border-radius:8px; margin:8px 0; }
   .qrbox { background:#fff; padding:10px; border-radius:8px; display:inline-block; margin:6px 0; }
   .detalle { font-size:13px; color:#cde; }
@@ -59,6 +60,7 @@
     <button class="rol" onclick="soyA()">Soy el ANFITRIÓN (reparto yo)</button>
     <button class="rol" onclick="soyB()">Me UNO a la partida</button>
     <button id="btnReconectar" class="oculto btnSec" onclick="reconectar()">Reconectar (recuperé una partida)</button>
+    <button id="btnBorrar" class="oculto" style="background:#c0392b" onclick="borrarPartida()">Borrar partida guardada y empezar de cero</button>
   </div>
 
   <div id="flujoA" class="oculto">
@@ -124,6 +126,7 @@
         <button id="btnEnviar" onclick="enviarJugada()">Enviar jugada</button>
       </div>
       <button id="btnRobar" onclick="robar()">Robar del pozo y pasar</button>
+      <button id="btnSincronizar" onclick="pedirEstado()">🔄 Sincronizar (si quedó trabado)</button>
     </div>
   </div>
 
@@ -137,6 +140,23 @@ function guardar() {
 function cargarGuardado() {
   try { const s = localStorage.getItem(CLAVE); return s ? JSON.parse(s) : null; } catch(e){ return null; }
 }
+function borrarPartida() {
+  if (!confirm("¿Borrar la partida guardada y empezar de cero?")) return;
+  try { localStorage.removeItem(CLAVE); } catch(e){}
+  location.reload();
+}
+
+/* ---------- Wake Lock: que no se duerma la pantalla ---------- */
+let wakeLock = null;
+async function pedirWakeLock() {
+  try {
+    if ('wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    }
+  } catch(e) { /* algunos navegadores lo niegan; no es crítico */ }
+}
+function soltarWakeLock(){ try{ if(wakeLock){ wakeLock.release(); wakeLock=null; } }catch(e){} }
 
 /* ---------- Conexión P2P ---------- */
 let pc, dataChannel, esAnfitrion = false;
@@ -165,13 +185,15 @@ function usarCanal(dc) {
     $('zonaEstado').classList.remove('oculto');
     $('zonaJuego').classList.remove('oculto');
     setLog("✅ ¡Conectado!");
+    pedirWakeLock();
     if (esAnfitrion && !recuperado) repartir();
-    else { render(); actualizarUI(); }
+    else { render(); actualizarUI(); pedirEstado(); }
   };
   dc.onmessage = (e) => manejarMensaje(JSON.parse(e.data));
-  dc.onclose = () => { log("❌ Canal cerrado."); mostrarAviso("Se cortó la conexión. Recargá y tocá 'Reconectar'."); };
+  dc.onclose = () => { log("❌ Canal cerrado."); soltarWakeLock(); mostrarAviso("Se cortó la conexión. Recargá y tocá 'Reconectar'."); };
 }
 function enviar(obj) { if (dataChannel && dataChannel.readyState === "open") dataChannel.send(JSON.stringify(obj)); }
+function canalAbierto(){ return dataChannel && dataChannel.readyState === "open"; }
 
 function soyA() {
   esAnfitrion = true; $('elegirRol').classList.add('oculto'); $('flujoA').classList.remove('oculto');
@@ -219,7 +241,7 @@ const CELDAS_TABLERO = 32, COLS = 8, FILAS = 4;
 const VEL_REPLAY = 400;
 
 let miMano = [], fichasEnPozo = 0;
-let pozoReal = []; // SOLO el anfitrión lo usa: las fichas reales del pozo
+let pozoReal = [];
 let tablero = new Array(CELDAS_TABLERO).fill(null);
 let esMiTurno = false, reproduciendo = false, recuperado = false;
 let yaAbri = false;
@@ -236,30 +258,51 @@ function mezclar(a){ for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.rando
 function repartir() {
   const mazo=mezclar(crearMazo());
   const manoA=mazo.splice(0,14), manoB=mazo.splice(0,14);
-  pozoReal = mazo;                    // el anfitrión guarda el pozo real
-  fichasEnPozo = pozoReal.length;
+  pozoReal = mazo; fichasEnPozo = pozoReal.length;
   const anfitrionEmpieza=Math.random()<0.5;
   enviar({ tipo:"reparto", mano:manoB, pozo:fichasEnPozo, rivalEmpieza:anfitrionEmpieza });
-  miMano=manoA; esMiTurno=anfitrionEmpieza; iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
+  miMano=manoA; esMiTurno=anfitrionEmpieza; yaAbri=false;
+  iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
 }
+
 function manejarMensaje(msg) {
-  if (msg.tipo==="reparto") { miMano=msg.mano; fichasEnPozo=msg.pozo; esMiTurno=msg.rivalEmpieza; iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar(); }
+  if (msg.tipo==="reparto") {
+    miMano=msg.mano; fichasEnPozo=msg.pozo; esMiTurno=msg.rivalEmpieza; yaAbri=false;
+    iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
+  }
   else if (msg.tipo==="jugada") { reproducirJugada(msg); }
-  else if (msg.tipo==="pedirFicha") { // solo el anfitrión responde: el invitado quiere robar
+  else if (msg.tipo==="pedirFicha") {
     if (esAnfitrion) {
       const f = pozoReal.shift() || null;
       fichasEnPozo = pozoReal.length;
       enviar({ tipo:"fichaRobada", ficha:f, pozo:fichasEnPozo });
-      // el turno pasa al anfitrión
       esMiTurno = true; iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
     }
   }
-  else if (msg.tipo==="fichaRobada") { // el invitado recibe su ficha
+  else if (msg.tipo==="fichaRobada") {
     if (msg.ficha) miMano.push(msg.ficha);
-    fichasEnPozo = msg.pozo;
-    esMiTurno = false; // ya robé, paso el turno
+    fichasEnPozo = msg.pozo; esMiTurno = false;
     render(); actualizarUI(); guardar();
   }
+  /* ---- re-sincronización ---- */
+  else if (msg.tipo==="pedirEstado") {
+    // le respondo con mi visión del estado común
+    enviar({ tipo:"estado", tablero, pozo:fichasEnPozo, turnoDelQueResponde: esMiTurno });
+  }
+  else if (msg.tipo==="estado") {
+    // me pongo al día con lo que me manda el otro
+    if (reproduciendo) return; // si estoy reproduciendo, ignoro
+    tablero = msg.tablero;
+    fichasEnPozo = msg.pozo;
+    esMiTurno = !msg.turnoDelQueResponde;
+    iniciarTurnoSiCorresponde();
+    render(); actualizarUI(); guardar();
+    log("🔄 Sincronizado con el rival.");
+  }
+}
+function pedirEstado(){
+  if (!canalAbierto()) { mostrarAviso("No hay conexión activa. Recargá y tocá 'Reconectar'."); return; }
+  enviar({ tipo:"pedirEstado" });
 }
 function iniciarTurnoSiCorresponde() {
   if (esMiTurno) { manoInicioTurno=JSON.parse(JSON.stringify(miMano)); tableroInicioTurno=JSON.parse(JSON.stringify(tablero)); movimientos=[]; }
@@ -322,20 +365,16 @@ function enviarJugada() {
 function robar() {
   if(!esMiTurno)return;
   if(fichasEnPozo<=0){ alert("El pozo está vacío"); return; }
-  // deshago cualquier movimiento del turno (robar termina el turno sin jugar)
   tablero=JSON.parse(JSON.stringify(tableroInicioTurno)); miMano=JSON.parse(JSON.stringify(manoInicioTurno)); movimientos=[];
   limpiarValidacion();
   if (esAnfitrion) {
-    // saco yo mismo del pozo real
     const f = pozoReal.shift() || null;
     if (f) miMano.push(f);
     fichasEnPozo = pozoReal.length;
     enviar({ tipo:"jugada", tablero:tablero, mano:miMano.length, pozo:fichasEnPozo, movimientos:[], robo:true });
     esMiTurno=false; render(); actualizarUI(); guardar();
   } else {
-    // le pido la ficha al anfitrión; cuando llegue "fichaRobada" se agrega y paso turno
     enviar({ tipo:"pedirFicha" });
-    // no cambio esMiTurno todavía; espero la respuesta
   }
 }
 function mostrarValidacion(ok,texto){ const m=$('msgValidacion'); m.textContent=texto; m.className=ok?"bueno":"malo"; m.classList.remove('oculto'); }
@@ -359,6 +398,7 @@ function esperar(ms){ return new Promise(r=>setTimeout(r,ms)); }
 function finPartida(gane){
   const et=$('estadoTurno'); et.textContent=gane?"🏆 ¡Ganaste!":"😔 Ganó tu rival"; et.className=gane?"miTurno":"turnoRival";
   ['btnDeshacer','btnEnviar','btnRobar'].forEach(id=>$(id).disabled=true);
+  soltarWakeLock();
   try{ localStorage.removeItem(CLAVE); }catch(e){}
 }
 
@@ -422,6 +462,15 @@ function soltarEnMano(){
   limpiarValidacion(); render(); guardar();
 }
 
+/* ---------- Al volver de segundo plano: re-sincronizar ---------- */
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    pedirWakeLock();
+    if (canalAbierto()) { enviar({ tipo:"pedirEstado" }); log("🔄 Volviendo... pidiendo estado"); }
+    else if (cargarGuardado()) { mostrarAviso("La conexión se cortó mientras estabas afuera. Recargá y tocá 'Reconectar'."); }
+  }
+});
+
 /* ---------- beforeunload + load ---------- */
 window.addEventListener("beforeunload",(e)=>{ const g=cargarGuardado(); if(g&&g.hayJuego){ e.preventDefault(); e.returnValue=""; } });
 window.addEventListener("load",()=>{
@@ -431,6 +480,7 @@ window.addEventListener("load",()=>{
     manoInicioTurno=JSON.parse(JSON.stringify(miMano)); tableroInicioTurno=JSON.parse(JSON.stringify(tablero));
     mostrarAviso("Se recuperó tu partida. Tocá 'Reconectar' para volver a unirte.");
     $('btnReconectar').classList.remove('oculto');
+    $('btnBorrar').classList.remove('oculto');
   }
 });
 </script>
