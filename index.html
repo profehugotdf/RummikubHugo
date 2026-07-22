@@ -532,4 +532,17 @@ document.addEventListener("visibilitychange",()=>{
 });
 window.addEventListener("beforeunload",(e)=>{ const g=cargarGuardado(); if(g&&g.hayJuego){ e.preventDefault(); e.returnValue=""; } });
 window.addEventListener("load",()=>{
-  const g=cargarGuarda
+  const g=cargarGuardado();
+  if(g&&g.hayJuego){
+    atril=g.atril||new Array(ATRIL_CELDAS).fill(null);
+    mesa=g.mesa||new Array(MESA_CELDAS).fill(null);
+    fichasEnPozo=g.fichasEnPozo; turnoDe=g.turnoDe; numeroTurno=g.numeroTurno||0;
+    esAnfitrion=g.esAnfitrion; yaAbri=!!g.yaAbri; pozoReal=g.pozoReal||[]; recuperado=true;
+    atrilInicioTurno=JSON.parse(JSON.stringify(atril)); mesaInicioTurno=JSON.parse(JSON.stringify(mesa));
+    mostrarAviso("Se recuperó tu partida. Tocá 'Reconectar' para volver a unirte.");
+    $('btnReconectar').classList.remove('oculto'); $('btnBorrar').classList.remove('oculto');
+  }
+});
+</script>
+</body>
+</html>
