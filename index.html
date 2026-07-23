@@ -48,8 +48,11 @@
   #atril .ficha { font-size:clamp(14px, 4.4vw, 27px); font-weight:900; border-radius:4px; box-shadow:0 2px 3px rgba(0,0,0,.45); }
 
   .celda { position:relative; }
-  .ficha { width:100%; height:100%; background:#f5f0e1 !important; display:flex; align-items:center; justify-content:center; font-weight:900; touch-action:none; user-select:none; }
-  .c-rojo{color:#d21b1b !important;} .c-azul{color:#1b52d2 !important;} .c-negro{color:#111 !important;} .c-naranja{color:#e08a00 !important;}
+  .ficha { width:100%; height:100%; background:#f5f0e1 !important; display:flex; align-items:center; justify-content:center; font-weight:900; touch-action:none; user-select:none; text-shadow:0 0 1px rgba(0,0,0,.25); }
+  .c-rojo   { color:#e60000 !important; background:#ffecec !important; }
+  .c-azul   { color:#0047d6 !important; background:#e8f0ff !important; }
+  .c-negro  { color:#000000 !important; background:#e2e2e2 !important; }
+  .c-naranja{ color:#b58900 !important; background:#fffbe0 !important; }
   .comodin{ color:#c0392b !important; }
   .arrastrando { opacity:.4; }
   .celda.resaltada { background:rgba(255,255,0,.4); }
@@ -61,27 +64,27 @@
   @media (orientation: landscape) {
     body { padding:3px; }
     h2 { display:none; }
-    #zonaEstado { padding:4px; margin:3px 0; }
-    #log { max-height:26px; min-height:0; font-size:10px; }
-    #zonaJuego { display:grid; grid-template-columns: 1fr 300px; gap:6px; align-items:start; }
-    #zonaJuego #estadoTurno { grid-column: 1 / -1; margin:2px 0; padding:4px; font-size:15px; }
-    #zonaJuego #msgValidacion { grid-column: 1 / -1; margin:2px 0; padding:4px; font-size:13px; }
+    #zonaEstado { padding:3px; margin:2px 0; }
+    #log { max-height:22px; min-height:0; font-size:10px; }
+    #zonaJuego { display:grid; grid-template-columns: 1fr 400px; gap:6px; align-items:start; }
+    #zonaJuego #estadoTurno { grid-column: 1 / -1; margin:2px 0; padding:3px; font-size:14px; }
+    #zonaJuego #msgValidacion { grid-column: 1 / -1; margin:2px 0; padding:3px; font-size:12px; }
     #zonaJuego > .paso:nth-of-type(1) { grid-column: 1; margin:0; }
-    #zonaJuego > .paso:nth-of-type(2) { grid-column: 2; margin:0; padding:5px; }
+    #zonaJuego > .paso:nth-of-type(2) { grid-column: 2; margin:0; padding:4px; }
 
-    /* la mesa se mide por ALTO: 8 filas siempre visibles */
-    #mesa { height:74vh; grid-auto-rows:minmax(0,1fr); max-width:calc(74vh / 8 * 0.75 * 21); margin:0 auto; }
+    #mesa { height:66vh; grid-auto-rows:minmax(0,1fr); max-width:calc(66vh / 8 * 0.75 * 21); margin:0 auto; }
     #mesa .celda { aspect-ratio:auto; height:100%; }
-    #mesa .ficha { font-size:clamp(8px, 3.4vh, 22px); }
+    #mesa .ficha { font-size:clamp(8px, 3vh, 20px); }
 
-    #atril { height:21vh; grid-auto-rows:minmax(0,1fr); grid-template-columns:repeat(5, minmax(0,1fr)); }
-    #atril .celda { aspect-ratio:auto; height:100%; }
-    #atril .ficha { font-size:clamp(12px, 4vh, 26px); }
+    /* atril con la proporción real de ficha: más alto */
+    #atril { gap:4px; padding:4px; }
+    #atril .ficha { font-size:clamp(13px, 1.6vw, 24px); }
 
-    #zonaJuego .titulo { font-size:13px; margin-bottom:2px; }
-    #zonaJuego button { padding:7px; margin:3px 0; font-size:13px; }
-    #btnNuevaPartida { font-size:14px; padding:9px; }
-    #btnSincronizar { font-size:11px; padding:5px; }
+    /* botones compactos para dejarle lugar al atril */
+    #zonaJuego .titulo { font-size:12px; margin-bottom:2px; }
+    #zonaJuego button { padding:5px; margin:2px 0; font-size:12px; }
+    #btnNuevaPartida { font-size:13px; padding:7px; }
+    #btnSincronizar { font-size:10px; padding:4px; }
   }
 </style>
 </head>
@@ -390,7 +393,6 @@ function validarJugada(){
   for(const m of movimientos){ if(m.desdeAtril && m.ficha) idsNuevos.add(m.ficha.id); }
 
   if(!yaAbri){
-    // en la apertura puedo reacomodar MIS fichas nuevas, pero no tocar las que ya estaban
     if(movimientos.some(m=>m.origenMesa!=null && !idsNuevos.has(m.ficha.id)))
       return {ok:false,motivo:"En la apertura solo podés bajar fichas de tu atril, sin tocar la mesa."};
     const bloquesTocados = bloques.filter(b => b.some(x => idsNuevos.has(x.ficha.id)));
