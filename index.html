@@ -61,7 +61,21 @@
   .celda.nueva { outline:2px solid #00e5ff; }
   .bloqueado { pointer-events:none; opacity:.9; }
 
-  @media (orientation: landscape) {
+  /* pantalla dividida / ventanas chicas: todo apilado y compacto */
+  @media (max-height: 520px) and (max-width: 719px) {
+    h2 { display:none; }
+    #zonaEstado { padding:3px; margin:2px 0; }
+    #log { max-height:20px; min-height:0; font-size:9px; }
+    #estadoTurno { font-size:13px; padding:3px; margin:2px 0; }
+    #msgValidacion { font-size:11px; padding:3px; margin:2px 0; }
+    .paso { padding:4px; margin:3px 0; }
+    #zonaJuego .titulo { font-size:12px; margin-bottom:2px; }
+    #zonaJuego button { padding:6px; margin:2px 0; font-size:12px; }
+    #btnSincronizar { font-size:10px; padding:4px; }
+  }
+
+  /* apaisado real: dos columnas, solo si hay ancho suficiente */
+  @media (orientation: landscape) and (min-width: 720px) {
     body { padding:3px; }
     h2 { display:none; }
     #zonaEstado { padding:3px; margin:2px 0; }
@@ -71,16 +85,11 @@
     #zonaJuego #msgValidacion { grid-column: 1 / -1; margin:2px 0; padding:3px; font-size:12px; }
     #zonaJuego > .paso:nth-of-type(1) { grid-column: 1; margin:0; }
     #zonaJuego > .paso:nth-of-type(2) { grid-column: 2; margin:0; padding:4px; }
-
     #mesa { height:66vh; grid-auto-rows:minmax(0,1fr); max-width:calc(66vh / 8 * 0.75 * 21); margin:0 auto; }
     #mesa .celda { aspect-ratio:auto; height:100%; }
     #mesa .ficha { font-size:clamp(8px, 3vh, 20px); }
-
-    /* atril con la proporción real de ficha: más alto */
     #atril { gap:4px; padding:4px; }
     #atril .ficha { font-size:clamp(13px, 1.6vw, 24px); }
-
-    /* botones compactos para dejarle lugar al atril */
     #zonaJuego .titulo { font-size:12px; margin-bottom:2px; }
     #zonaJuego button { padding:5px; margin:2px 0; font-size:12px; }
     #btnNuevaPartida { font-size:13px; padding:7px; }
@@ -331,6 +340,14 @@ function manejarMensaje(msg){
   else if(msg.tipo==="pedirEstado"){
     enviar({tipo:"estado",mesa,pozo:fichasEnPozo,turnoDe,numeroTurno});
   }
+  /* ---- latido: detecta desacuerdos solo ---- */
+  else if(msg.tipo==="ping"){
+    if(msg.numeroTurno > numeroTurno){ enviar({tipo:"pedirEstado"}); }
+    else if(msg.numeroTurno < numeroTurno){ enviar({tipo:"estado",mesa,pozo:fichasEnPozo,turnoDe,numeroTurno}); }
+    else if(msg.turnoDe !== turnoDe){
+      if(esAnfitrion){ enviar({tipo:"estado",mesa,pozo:fichasEnPozo,turnoDe,numeroTurno}); log("⚠️ Desacuerdo de turno: corrijo yo."); }
+    }
+  }
   else if(msg.tipo==="estado"){
     if(msg.numeroTurno > numeroTurno){
       reproduciendo=false;
@@ -490,7 +507,12 @@ function finPartida(gane){
   try{ localStorage.removeItem(CLAVE); }catch(e){}
 }
 
-/* ---------- Vigilante anti-trabas ---------- */
+/* ---------- Latido automático + vigilante ---------- */
+setInterval(()=>{
+  if(!canalAbierto() || partidaTerminada || turnoDe===null) return;
+  enviar({tipo:"ping", turnoDe, numeroTurno});
+}, 4000);
+
 setInterval(()=>{
   if(reproduciendo && Date.now()-inicioReproduccion>15000){
     reproduciendo=false; actualizarUI();
