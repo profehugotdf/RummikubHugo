@@ -9,13 +9,14 @@
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <style>
   :root { color-scheme: light only; }
-  body { font-family: sans-serif; margin:0; padding:8px; background:#1b3d1b; color:#eee; font-size:15px; }
+  body { font-family: sans-serif; margin:0; padding:6px; background:#1b3d1b; color:#eee; font-size:15px; }
   h2 { margin:4px 0; font-size:20px; }
   textarea { width:100%; height:60px; font-size:13px; box-sizing:border-box; margin:6px 0; background:#fff !important; color:#000 !important; }
   button { padding:11px; margin:5px 0; width:100%; font-size:15px; border-radius:8px; border:none; background:#4caf50; color:white; }
   button:disabled { background:#777; opacity:.6; }
   .btnSec { background:#1565c0; }
-  .paso { background:#2a5a2a; padding:10px; border-radius:10px; margin:6px 0; }
+  .paso { background:#2a5a2a; padding:8px; border-radius:10px; margin:6px 0; }
+  .paso.mesaWrap { padding:4px; }
   .titulo { font-weight:bold; font-size:16px; margin-bottom:4px; color:#fff; }
   .oculto { display:none; }
   #log { background:#000; color:#0f0; padding:6px; font-size:11px; min-height:26px; border-radius:8px; white-space:pre-wrap; max-height:56px; overflow-y:auto; }
@@ -31,15 +32,16 @@
   #btnDeshacer { background:#c0392b; }
   #btnOrdenar { background:#6a1b9a; }
   #btnSincronizar { background:#00695c; font-size:13px; padding:7px; }
+  #btnNuevaPartida { background:#0277bd; font-size:17px; padding:14px; }
   #aviso { background:#1565c0; color:#fff; padding:9px; border-radius:8px; margin:6px 0; }
   .qrbox { background:#fff; padding:10px; border-radius:8px; display:inline-block; margin:6px 0; }
   .detalle { font-size:13px; color:#cde; }
   details summary { cursor:pointer; padding:6px 0; }
   #cam { width:100%; border-radius:8px; background:#000; }
 
-  #mesa { display:grid; grid-template-columns:repeat(20, 1fr); gap:1px; background:#0d3d0d; padding:4px; border-radius:8px; }
+  #mesa { display:grid; grid-template-columns:repeat(21, 1fr); gap:1px; background:#0d3d0d; padding:2px; border-radius:6px; }
   #mesa .celda { aspect-ratio:3/4; background:rgba(255,255,255,.05); border-radius:2px; }
-  #mesa .ficha { font-size:clamp(8px, 2.6vw, 19px); font-weight:900; border-radius:2px; box-shadow:0 1px 1px rgba(0,0,0,.4); }
+  #mesa .ficha { font-size:clamp(8px, 2.5vw, 19px); font-weight:900; border-radius:2px; box-shadow:0 1px 1px rgba(0,0,0,.4); }
 
   #atril { display:grid; grid-template-columns:repeat(10, 1fr); gap:3px; background:#0d260d; padding:5px; border-radius:8px; }
   #atril .celda { aspect-ratio:3/4; background:rgba(255,255,255,.07); border-radius:4px; }
@@ -57,12 +59,12 @@
   .bloqueado { pointer-events:none; opacity:.9; }
 
   @media (orientation: landscape) {
-    #zonaJuego { display:grid; grid-template-columns: 1fr 340px; gap:8px; align-items:start; }
+    #zonaJuego { display:grid; grid-template-columns: 1fr 330px; gap:8px; align-items:start; }
     #zonaJuego #estadoTurno { grid-column: 1 / -1; }
     #zonaJuego #msgValidacion { grid-column: 1 / -1; }
     #zonaJuego > .paso:nth-of-type(1) { grid-column: 1; }
     #zonaJuego > .paso:nth-of-type(2) { grid-column: 2; }
-    #mesa .ficha { font-size:clamp(8px, 1.3vw, 20px); }
+    #mesa .ficha { font-size:clamp(8px, 1.25vw, 20px); }
     #atril { grid-template-columns:repeat(5, 1fr); }
     #atril .ficha { font-size:clamp(14px, 2.4vw, 26px); }
   }
@@ -132,13 +134,13 @@
   <div id="zonaJuego" class="oculto">
     <div id="estadoTurno"></div>
     <div id="msgValidacion" class="oculto"></div>
-    <div class="paso">
-      <div class="titulo">Mesa</div>
+    <div class="paso mesaWrap">
       <div id="mesa"></div>
     </div>
     <div class="paso">
       <div class="titulo">Atril (<span id="cuenta">0</span>) · Pozo: <span id="pozo">0</span> <span id="abierto"></span></div>
       <div id="atril"></div>
+      <button id="btnNuevaPartida" class="oculto" onclick="nuevaPartida()">🔄 Nueva partida</button>
       <button id="btnOrdenar" onclick="ordenarAtril()">↕ Ordenar atril</button>
       <div class="botonera">
         <button id="btnDeshacer" onclick="deshacer()">Deshacer</button>
@@ -237,7 +239,7 @@ function cerrarCamara(){ if(camRAF)cancelAnimationFrame(camRAF); if(camStream){c
 
 /* ---------- Estado ---------- */
 const COLORES=["rojo","azul","negro","naranja"];
-const MESA_COLS=20, MESA_FILAS=8, MESA_CELDAS=MESA_COLS*MESA_FILAS;
+const MESA_COLS=21, MESA_FILAS=8, MESA_CELDAS=MESA_COLS*MESA_FILAS;
 const ATRIL_COLS=10, ATRIL_FILAS=3, ATRIL_CELDAS=ATRIL_COLS*ATRIL_FILAS;
 const VEL_REPLAY=400;
 
@@ -245,7 +247,8 @@ let atril=new Array(ATRIL_CELDAS).fill(null);
 let mesa=new Array(MESA_CELDAS).fill(null);
 let pozoReal=[], fichasEnPozo=0;
 let turnoDe=null, numeroTurno=0;
-let reproduciendo=false, recuperado=false, yaAbri=false;
+let reproduciendo=false, recuperado=false, yaAbri=false, partidaTerminada=false;
+let inicioReproduccion=0;
 let atrilInicioTurno=null, mesaInicioTurno=null, movimientos=[];
 
 function miId(){ return esAnfitrion ? "A" : "B"; }
@@ -267,18 +270,32 @@ function repartir(){
   pozoReal=mazo; fichasEnPozo=pozoReal.length;
   turnoDe = Math.random()<0.5 ? "A" : "B";
   numeroTurno = 1;
+  mesa=new Array(MESA_CELDAS).fill(null);
   enviar({tipo:"reparto",mano:mB,pozo:fichasEnPozo,turnoDe,numeroTurno});
   atril=new Array(ATRIL_CELDAS).fill(null); mA.forEach(f=>ponerEnAtril(f));
-  yaAbri=false;
+  yaAbri=false; partidaTerminada=false; reproduciendo=false;
+  $('btnNuevaPartida').classList.add('oculto');
+  limpiarValidacion();
   ordenarAtril(true); iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
+}
+
+function nuevaPartida(){
+  if(!canalAbierto()){ mostrarAviso("No hay conexión. Recargá y tocá 'Reconectar'."); return; }
+  if(esAnfitrion) repartir();
+  else { enviar({tipo:"pedirNuevaPartida"}); log("⏳ Pidiendo nueva partida al anfitrión..."); }
 }
 
 function manejarMensaje(msg){
   if(msg.tipo==="reparto"){
     atril=new Array(ATRIL_CELDAS).fill(null); msg.mano.forEach(f=>ponerEnAtril(f));
-    fichasEnPozo=msg.pozo; turnoDe=msg.turnoDe; numeroTurno=msg.numeroTurno; yaAbri=false;
+    mesa=new Array(MESA_CELDAS).fill(null);
+    fichasEnPozo=msg.pozo; turnoDe=msg.turnoDe; numeroTurno=msg.numeroTurno;
+    yaAbri=false; partidaTerminada=false; reproduciendo=false;
+    $('btnNuevaPartida').classList.add('oculto');
+    limpiarValidacion();
     ordenarAtril(true); iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
   }
+  else if(msg.tipo==="pedirNuevaPartida"){ if(esAnfitrion) repartir(); }
   else if(msg.tipo==="jugada"){ reproducirJugada(msg); }
   else if(msg.tipo==="pedirFicha"){
     if(esAnfitrion){
@@ -297,19 +314,20 @@ function manejarMensaje(msg){
     enviar({tipo:"estado",mesa,pozo:fichasEnPozo,turnoDe,numeroTurno});
   }
   else if(msg.tipo==="estado"){
-    if(reproduciendo) return;
+    // adopto siempre el estado más avanzado, aunque crea estar reproduciendo
     if(msg.numeroTurno > numeroTurno){
+      reproduciendo=false;
       mesa=msg.mesa; fichasEnPozo=msg.pozo; turnoDe=msg.turnoDe; numeroTurno=msg.numeroTurno;
       iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
       log("🔄 Sincronizado (turno "+numeroTurno+").");
     } else if(msg.numeroTurno===numeroTurno && turnoDe!==msg.turnoDe){
-      if(!esAnfitrion){ turnoDe=msg.turnoDe; mesa=msg.mesa; fichasEnPozo=msg.pozo;
+      if(!esAnfitrion){ reproduciendo=false; turnoDe=msg.turnoDe; mesa=msg.mesa; fichasEnPozo=msg.pozo;
         iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar(); log("🔄 Turno corregido por el anfitrión."); }
       else { enviar({tipo:"estado",mesa,pozo:fichasEnPozo,turnoDe,numeroTurno}); }
     }
   }
 }
-function pedirEstado(){ if(!canalAbierto()){ mostrarAviso("No hay conexión activa. Recargá y tocá 'Reconectar'."); return; } enviar({tipo:"pedirEstado"}); }
+function pedirEstado(){ if(!canalAbierto()){ mostrarAviso("No hay conexión activa. Recargá y tocá 'Reconectar'."); return; } reproduciendo=false; actualizarUI(); enviar({tipo:"pedirEstado"}); }
 
 function iniciarTurnoSiCorresponde(){
   if(esMiTurno()){ atrilInicioTurno=JSON.parse(JSON.stringify(atril)); mesaInicioTurno=JSON.parse(JSON.stringify(mesa)); movimientos=[]; }
@@ -357,31 +375,26 @@ function validarJugada(){
   const idsNuevos = new Set();
   for(const m of movimientos){ if(m.desdeAtril && m.ficha) idsNuevos.add(m.ficha.id); }
 
-  // bloques que contienen alguna ficha nueva de este turno
-  const bloquesTocados = bloques.filter(b => b.some(x => idsNuevos.has(x.ficha.id)));
-
   if(!yaAbri){
-    // APERTURA: no se puede tocar la mesa previa
     if(movimientos.some(m=>m.origenMesa!=null))
       return {ok:false,motivo:"En la apertura solo podés bajar fichas de tu atril, sin tocar la mesa."};
+    const bloquesTocados = bloques.filter(b => b.some(x => idsNuevos.has(x.ficha.id)));
     if(bloquesTocados.length===0)
       return {ok:false,motivo:"No bajaste ninguna ficha a la mesa."};
-    // cada bloque nuevo debe ser válido y no mezclarse con fichas viejas; suma total 30+
     let suma=0;
     for(const b of bloquesTocados){
       if(b.some(x=>!idsNuevos.has(x.ficha.id)))
-        return {ok:false,motivo:"Una jugada quedó pegada a otra de la mesa. Separala con una celda vacía o ponela en otra fila.",celdas:b.map(x=>x.idx)};
+        return {ok:false,motivo:"Una jugada quedó pegada a otra. Separala con una celda vacía o usá otra fila.",celdas:b.map(x=>x.idx)};
       if(!bloqueValido(b))
         return {ok:false,motivo:"Hay un grupo/escalera inválido en tu apertura.",celdas:b.map(x=>x.idx)};
       for(const x of b){ if(!x.ficha.comodin) suma+=x.ficha.num; }
     }
-    if(suma<30) return {ok:false,motivo:"Tu apertura debe sumar al menos 30 entre todas tus jugadas (suma "+suma+")."};
+    if(suma<30) return {ok:false,motivo:"Tu apertura debe sumar al menos 30 (suma "+suma+")."};
     return {ok:true};
   }
 
-  // YA ABRIÓ: todos los bloques tocados deben ser válidos
-  for(const b of bloquesTocados){
-    if(!bloqueValido(b)) return {ok:false,motivo:"Hay un grupo/escalera inválido.",celdas:b.map(x=>x.idx)};
+  for(const b of bloques){
+    if(!bloqueValido(b)) return {ok:false,motivo:"Un grupo/escalera de la mesa quedó inválido. Acomodalo antes de enviar.",celdas:b.map(x=>x.idx)};
   }
   return {ok:true};
 }
@@ -393,9 +406,8 @@ function deshacer(){
   limpiarValidacion(); render(); guardar();
 }
 function enviarJugada(){
-  if(!esMiTurno()) return;
-  const huboMesa = movimientos.some(m=>m.destino!=null||m.origenMesa!=null);
-  if(!huboMesa){ mostrarValidacion(false,"No bajaste ninguna ficha. Usá 'Robar del pozo y pasar'."); return; }
+  if(!esMiTurno()||partidaTerminada) return;
+  if(movimientos.length===0){ mostrarValidacion(false,"No hiciste ninguna jugada. Usá 'Robar del pozo y pasar'."); return; }
   const v=validarJugada();
   if(!v.ok){ mostrarValidacion(false,v.motivo); resaltarInvalidas(v.celdas||[]); return; }
   if(!yaAbri) yaAbri=true;
@@ -407,7 +419,7 @@ function enviarJugada(){
   if(gano) finPartida(true);
 }
 function robar(){
-  if(!esMiTurno()) return;
+  if(!esMiTurno()||partidaTerminada) return;
   if(fichasEnPozo<=0){ alert("El pozo está vacío"); return; }
   atril=JSON.parse(JSON.stringify(atrilInicioTurno)); mesa=JSON.parse(JSON.stringify(mesaInicioTurno)); movimientos=[];
   limpiarValidacion();
@@ -426,34 +438,55 @@ function resaltarInvalidas(cs){ document.querySelectorAll('.celda.invalida').for
 
 /* ---------- Reproducir jugada ---------- */
 async function reproducirJugada(msg){
-  reproduciendo=true; actualizarUI();
-  for(const m of (msg.movimientos||[])){
-    if(m.origenMesa!=null) mesa[m.origenMesa]=null;
-    if(m.destino!=null) mesa[m.destino]=m.ficha;
-    renderMesa();
-    if(m.destino!=null){
-      const c=document.querySelector('#mesa .celda[data-celda="'+m.destino+'"]');
-      if(c) c.classList.add("replay");
-      await esperar(VEL_REPLAY);
-      if(c) c.classList.remove("replay");
+  reproduciendo=true; inicioReproduccion=Date.now(); actualizarUI();
+  try{
+    // si la pantalla está oculta, aplico todo de una (sin animación)
+    if(!document.hidden){
+      for(const m of (msg.movimientos||[])){
+        if(m.origenMesa!=null) mesa[m.origenMesa]=null;
+        if(m.destino!=null) mesa[m.destino]=m.ficha;
+        renderMesa();
+        if(m.destino!=null){
+          const c=document.querySelector('#mesa .celda[data-celda="'+m.destino+'"]');
+          if(c) c.classList.add("replay");
+          await esperar(VEL_REPLAY);
+          if(c) c.classList.remove("replay");
+        }
+        if(document.hidden) break;
+      }
     }
+  } catch(e){ }
+  finally{
+    mesa=msg.mesa; fichasEnPozo=msg.pozo;
+    turnoDe=msg.turnoDe; numeroTurno=msg.numeroTurno;
+    reproduciendo=false;
+    if(msg.gano){ render(); actualizarUI(); finPartida(false); return; }
+    iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
   }
-  mesa=msg.mesa; fichasEnPozo=msg.pozo;
-  turnoDe=msg.turnoDe; numeroTurno=msg.numeroTurno;
-  reproduciendo=false;
-  if(msg.gano){ render(); actualizarUI(); finPartida(false); return; }
-  iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
 }
 function esperar(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
 function finPartida(gane){
+  partidaTerminada=true;
   const e=$('estadoTurno'); e.textContent=gane?"🏆 ¡Ganaste!":"😔 Ganó tu rival"; e.className=gane?"miTurno":"turnoRival";
   ['btnDeshacer','btnEnviar','btnRobar'].forEach(id=>$(id).disabled=true);
-  soltarWakeLock(); try{ localStorage.removeItem(CLAVE); }catch(e){}
+  $('btnNuevaPartida').classList.remove('oculto');
+  try{ localStorage.removeItem(CLAVE); }catch(e){}
 }
+
+/* ---------- Vigilante anti-trabas ---------- */
+setInterval(()=>{
+  if(reproduciendo && Date.now()-inicioReproduccion>15000){
+    reproduciendo=false; actualizarUI();
+    log("⚠️ Destrabado automático, sincronizando...");
+    if(canalAbierto()) enviar({tipo:"pedirEstado"});
+  }
+}, 5000);
 
 /* ---------- UI ---------- */
 function actualizarUI(){
   const e=$('estadoTurno');
+  if(partidaTerminada) return;
   if(reproduciendo){ e.textContent="👀 Mirando la jugada del rival..."; e.className="turnoRival"; }
   else if(esMiTurno()){ e.textContent="🟢 Tu turno"; e.className="miTurno"; }
   else { e.textContent="⏳ Turno del rival"; e.className="turnoRival"; }
@@ -504,7 +537,7 @@ function limpiarFantasmas(){
 }
 function hacerArrastrable(div,ficha){
   div.addEventListener("pointerdown",(e)=>{
-    if(reproduciendo) return;
+    if(reproduciendo||partidaTerminada) return;
     if(div.dataset.origen==="mesa" && !esMiTurno()) return;
     e.preventDefault();
     limpiarFantasmas();
@@ -545,9 +578,9 @@ function soltar(zona,destino){
     if(desde==="atril"){ atril[orig]=null; mesa[destino]=f; movimientos.push({ficha:f,destino,desdeAtril:true}); }
     else { if(orig===destino) return; mesa[orig]=null; mesa[destino]=f; movimientos.push({ficha:f,destino,origenMesa:orig}); }
   } else {
+    if(desde!=="atril"){ mostrarValidacion(false,"Lo que ya bajaste a la mesa no puede volver al atril."); return; }
     if(atril[destino]) return;
-    if(desde==="atril"){ atril[orig]=null; atril[destino]=f; }
-    else { if(!esMiTurno()) return; mesa[orig]=null; atril[destino]=f; movimientos.push({ficha:f,aAtril:true,origenMesa:orig}); }
+    atril[orig]=null; atril[destino]=f;
   }
   limpiarValidacion(); render(); guardar();
 }
@@ -558,6 +591,7 @@ document.addEventListener("visibilitychange",()=>{
   if(document.visibilityState==="visible"){
     pedirWakeLock();
     limpiarFantasmas();
+    if(reproduciendo){ reproduciendo=false; actualizarUI(); }
     const ahora=Date.now();
     if(ahora-ultimoPedido<3000) return;
     ultimoPedido=ahora;
