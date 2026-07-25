@@ -20,6 +20,7 @@
   .titulo { font-weight:bold; font-size:16px; margin-bottom:4px; color:#fff; }
   .oculto { display:none; }
   #log { background:#000; color:#0f0; padding:6px; font-size:11px; min-height:26px; border-radius:8px; white-space:pre-wrap; max-height:56px; overflow-y:auto; }
+  #diag { background:#111; color:#7fdfff; padding:6px; font-size:11px; border-radius:8px; white-space:pre-wrap; max-height:200px; overflow-y:auto; margin:6px 0; font-family:monospace; }
   .rol { font-size:18px; padding:16px; }
   #estadoTurno { font-weight:bold; font-size:17px; text-align:center; padding:7px; border-radius:8px; margin:5px 0; }
   .miTurno { background:#2e7d32; }
@@ -61,7 +62,6 @@
   .celda.nueva { outline:2px solid #00e5ff; }
   .bloqueado { pointer-events:none; opacity:.9; }
 
-  /* pantalla dividida / ventanas chicas: todo apilado y compacto */
   @media (max-height: 520px) and (max-width: 719px) {
     h2 { display:none; }
     #zonaEstado { padding:3px; margin:2px 0; }
@@ -74,7 +74,6 @@
     #btnSincronizar { font-size:10px; padding:4px; }
   }
 
-  /* apaisado real: dos columnas, solo si hay ancho suficiente */
   @media (orientation: landscape) and (min-width: 720px) {
     body { padding:3px; }
     h2 { display:none; }
@@ -101,6 +100,7 @@
   <h2>Rummikub</h2>
 
   <div id="aviso" class="oculto"></div>
+  <div id="diag">diagnóstico: esperando...</div>
 
   <div id="elegirRol" class="paso">
     <div class="titulo">¿Quién sos?</div>
@@ -179,6 +179,11 @@
   </div>
 
 <script>
+/* ---------- Diagnóstico visible ---------- */
+const $ = (id)=>document.getElementById(id);
+function diag(t){ const d=$('diag'); d.textContent += "\n"+t; d.scrollTop=d.scrollHeight; }
+function setDiag(t){ $('diag').textContent=t; }
+
 /* ---------- Persistencia ---------- */
 const CLAVE = "rummikub_estado_v3";
 function guardar() {
@@ -198,27 +203,47 @@ function soltarWakeLock(){ try{ if(wakeLock){wakeLock.release();wakeLock=null;} 
 
 /* ---------- Conexión P2P ---------- */
 let pc, dataChannel, esAnfitrion=false;
-const $ = (id)=>document.getElementById(id);
 function log(t){ const l=$('log'); l.textContent += "\n"+t; l.scrollTop=l.scrollHeight; }
 function setLog(t){ $('log').textContent=t; }
 function mostrarAviso(t){ const a=$('aviso'); a.textContent=t; a.classList.remove('oculto'); }
-function mostrarQR(id,txt){ const c=$(id); c.innerHTML=""; try{ new QRCode(c,{text:txt,width:240,height:240,correctLevel:QRCode.CorrectLevel.L}); }catch(e){} }
+function mostrarQR(id,txt){ const c=$(id); c.innerHTML=""; try{ new QRCode(c,{text:txt,width:240,height:240,correctLevel:QRCode.CorrectLevel.L}); }catch(e){ diag("⚠️ error QR: "+e.message); } }
 
 function crearPC(){
-  pc = new RTCPeerConnection({ iceServers:[{urls:"stun:stun.l.google.com:19302"}] });
-  let listo=false;
+  pc = new RTCPeerConnection({ iceServers:[
+    {urls:"stun:stun.l.google.com:19302"},
+    {urls:"stun:stun1.l.google.com:19302"}
+  ] });
+  diag("PC creado. Recolectando candidatos ICE...");
+  let listo=false; let nCand=0, nHost=0, nSrflx=0, nRelay=0;
   const terminar=()=>{ if(listo)return; listo=true;
+    diag("ICE listo. candidatos="+nCand+" (host="+nHost+" srflx="+nSrflx+" relay="+nRelay+")");
+    if(nSrflx===0) diag("⚠️ Sin candidatos públicos (srflx). El STUN no respondió: en redes distintas NO va a conectar.");
     const code=btoa(JSON.stringify(pc.localDescription));
     if(esAnfitrion){ $('ofertaOut').value=code; mostrarQR('qrOferta',code); }
     else { $('respuestaOut').value=code; mostrarQR('qrRespuesta',code); }
+    diag("Código generado ("+code.length+" caracteres).");
   };
-  pc.onicecandidate=(e)=>{ if(e.candidate===null) terminar(); };
+  pc.onicecandidate=(e)=>{
+    if(e.candidate){
+      nCand++;
+      const t=e.candidate.type||"";
+      if(t==="host") nHost++; else if(t==="srflx") nSrflx++; else if(t==="relay") nRelay++;
+    } else { terminar(); }
+  };
+  pc.oniceconnectionstatechange=()=>{
+    diag("ICE estado: "+pc.iceConnectionState);
+    if(pc.iceConnectionState==="failed") diag("❌ ICE falló: los dos teléfonos no lograron un camino directo. Suele ser NAT/roaming. Necesita TURN.");
+    if(pc.iceConnectionState==="connected"||pc.iceConnectionState==="completed") diag("✅ ICE conectado.");
+  };
+  pc.onconnectionstatechange=()=>{ diag("Conexión: "+pc.connectionState); };
   setTimeout(terminar,3000);
 }
 function usarCanal(dc){
   dataChannel=dc;
   dc.onopen=()=>{
+    diag("✅✅ CANAL ABIERTO — ¡conectados!");
     ['elegirRol','flujoA','flujoB','zonaCamara'].forEach(id=>$(id).classList.add('oculto'));
+    $('diag').classList.add('oculto');
     $('zonaEstado').classList.remove('oculto');
     $('zonaJuego').classList.remove('oculto');
     setLog("✅ ¡Conectado!"); pedirWakeLock();
@@ -226,22 +251,33 @@ function usarCanal(dc){
     else { render(); actualizarUI(); pedirEstado(); }
   };
   dc.onmessage=(e)=>manejarMensaje(JSON.parse(e.data));
-  dc.onclose=()=>{ log("❌ Canal cerrado."); soltarWakeLock(); mostrarAviso("Se cortó la conexión. Recargá y tocá 'Reconectar'."); };
+  dc.onclose=()=>{ log("❌ Canal cerrado."); diag("❌ Canal cerrado."); soltarWakeLock(); mostrarAviso("Se cortó la conexión. Recargá y tocá 'Reconectar'."); };
 }
 function enviar(o){ if(dataChannel && dataChannel.readyState==="open") dataChannel.send(JSON.stringify(o)); }
 function canalAbierto(){ return dataChannel && dataChannel.readyState==="open"; }
 
 function soyA(){ esAnfitrion=true; $('elegirRol').classList.add('oculto'); $('flujoA').classList.remove('oculto');
-  crearPC(); usarCanal(pc.createDataChannel("juego")); pc.createOffer().then(o=>pc.setLocalDescription(o)); }
-function soyB(){ $('elegirRol').classList.add('oculto'); $('flujoB').classList.remove('oculto'); }
+  setDiag("Soy ANFITRIÓN."); crearPC(); usarCanal(pc.createDataChannel("juego")); pc.createOffer().then(o=>pc.setLocalDescription(o)); }
+function soyB(){ $('elegirRol').classList.add('oculto'); $('flujoB').classList.remove('oculto'); setDiag("Soy INVITADO. Esperando escanear/pegar la invitación."); }
 async function unirseB(){
   const t=$('ofertaIn').value.trim(); if(!t){alert("Escaneá o pegá la invitación");return;}
-  crearPC(); pc.ondatachannel=(e)=>usarCanal(e.channel);
-  await pc.setRemoteDescription(JSON.parse(atob(t)));
-  const a=await pc.createAnswer(); await pc.setLocalDescription(a);
-  $('pasoBResp').classList.remove('oculto');
+  try{
+    setDiag("Invitado: procesando invitación...");
+    crearPC(); pc.ondatachannel=(e)=>{ diag("Recibí el canal del anfitrión."); usarCanal(e.channel); };
+    await pc.setRemoteDescription(JSON.parse(atob(t)));
+    diag("Invitación aceptada. Generando respuesta...");
+    const a=await pc.createAnswer(); await pc.setLocalDescription(a);
+    $('pasoBResp').classList.remove('oculto');
+  }catch(e){ diag("❌ Error al unirse: "+e.message+"\n(¿código incompleto o vencido?)"); }
 }
-async function confirmarA(){ const t=$('respuestaIn').value.trim(); if(!t){alert("Escaneá o pegá la respuesta");return;} await pc.setRemoteDescription(JSON.parse(atob(t))); }
+async function confirmarA(){
+  const t=$('respuestaIn').value.trim(); if(!t){alert("Escaneá o pegá la respuesta");return;}
+  try{
+    diag("Anfitrión: aplicando respuesta del invitado...");
+    await pc.setRemoteDescription(JSON.parse(atob(t)));
+    diag("Respuesta aplicada. Esperando que se abra el canal...");
+  }catch(e){ diag("❌ Error al conectar: "+e.message+"\n(¿respuesta incompleta o vencida?)"); }
+}
 function copiar(id){ const e=$(id); e.select(); navigator.clipboard.writeText(e.value).then(()=>alert("¡Copiado!"),()=>{document.execCommand('copy');alert("¡Copiado!");}); }
 function reconectar(){ const g=cargarGuardado(); if(!g){alert("No hay partida guardada");return;} if(g.esAnfitrion)soyA(); else soyB(); }
 
@@ -340,7 +376,6 @@ function manejarMensaje(msg){
   else if(msg.tipo==="pedirEstado"){
     enviar({tipo:"estado",mesa,pozo:fichasEnPozo,turnoDe,numeroTurno});
   }
-  /* ---- latido: detecta desacuerdos solo ---- */
   else if(msg.tipo==="ping"){
     if(msg.numeroTurno > numeroTurno){ enviar({tipo:"pedirEstado"}); }
     else if(msg.numeroTurno < numeroTurno){ enviar({tipo:"estado",mesa,pozo:fichasEnPozo,turnoDe,numeroTurno}); }
@@ -507,12 +542,11 @@ function finPartida(gane){
   try{ localStorage.removeItem(CLAVE); }catch(e){}
 }
 
-/* ---------- Latido automático + vigilante ---------- */
+/* ---------- Latido + vigilante ---------- */
 setInterval(()=>{
   if(!canalAbierto() || partidaTerminada || turnoDe===null) return;
   enviar({tipo:"ping", turnoDe, numeroTurno});
 }, 4000);
-
 setInterval(()=>{
   if(reproduciendo && Date.now()-inicioReproduccion>15000){
     reproduciendo=false; actualizarUI();
