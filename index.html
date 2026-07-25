@@ -11,6 +11,7 @@
   :root { color-scheme: light only; }
   body { font-family: sans-serif; margin:0; padding:6px; background:#1b3d1b; color:#eee; font-size:15px; }
   h2 { margin:4px 0; font-size:20px; }
+  input[type=text], input[type=number] { width:100%; padding:10px; font-size:15px; border-radius:8px; border:none; margin:5px 0; box-sizing:border-box; }
   textarea { width:100%; height:60px; font-size:13px; box-sizing:border-box; margin:6px 0; background:#fff !important; color:#000 !important; }
   button { padding:11px; margin:5px 0; width:100%; font-size:15px; border-radius:8px; border:none; background:#4caf50; color:white; }
   button:disabled { background:#777; opacity:.6; }
@@ -22,6 +23,7 @@
   #log { background:#000; color:#0f0; padding:6px; font-size:11px; min-height:26px; border-radius:8px; white-space:pre-wrap; max-height:56px; overflow-y:auto; }
   #diag { background:#111; color:#7fdfff; padding:6px; font-size:11px; border-radius:8px; white-space:pre-wrap; max-height:200px; overflow-y:auto; margin:6px 0; font-family:monospace; }
   .rol { font-size:18px; padding:16px; }
+  #marcador { text-align:center; font-size:14px; padding:6px; background:#154; border-radius:8px; margin:4px 0; color:#fff; }
   #estadoTurno { font-weight:bold; font-size:17px; text-align:center; padding:7px; border-radius:8px; margin:5px 0; }
   .miTurno { background:#2e7d32; }
   .turnoRival { background:#8a5a00; }
@@ -39,6 +41,7 @@
   .detalle { font-size:13px; color:#cde; }
   details summary { cursor:pointer; padding:6px 0; }
   #cam { width:100%; border-radius:8px; background:#000; }
+  .radioLinea { color:#fff; display:block; margin:6px 0; font-size:14px; }
 
   #mesa { display:grid; grid-template-columns:repeat(21, minmax(0,1fr)); gap:1px; background:#0d3d0d; padding:2px; border-radius:6px; }
   #mesa .celda { aspect-ratio:3/4; background:rgba(255,255,255,.05); border-radius:2px; }
@@ -80,7 +83,7 @@
     #zonaEstado { padding:3px; margin:2px 0; }
     #log { max-height:22px; min-height:0; font-size:10px; }
     #zonaJuego { display:grid; grid-template-columns: 1fr 400px; gap:6px; align-items:start; }
-    #zonaJuego #estadoTurno { grid-column: 1 / -1; margin:2px 0; padding:3px; font-size:14px; }
+    #zonaJuego #estadoTurno, #zonaJuego #marcador { grid-column: 1 / -1; margin:2px 0; padding:3px; font-size:14px; }
     #zonaJuego #msgValidacion { grid-column: 1 / -1; margin:2px 0; padding:3px; font-size:12px; }
     #zonaJuego > .paso:nth-of-type(1) { grid-column: 1; margin:0; }
     #zonaJuego > .paso:nth-of-type(2) { grid-column: 2; margin:0; padding:4px; }
@@ -103,7 +106,12 @@
   <div id="diag">diagnóstico: esperando...</div>
 
   <div id="elegirRol" class="paso">
-    <div class="titulo">¿Quién sos?</div>
+    <div class="titulo">Tu nombre</div>
+    <input type="text" id="miNombreInput" placeholder="Ej: Hugo">
+    <div class="titulo" style="margin-top:10px;">Si sos anfitrión, elegí el modo de la serie</div>
+    <label class="radioLinea"><input type="radio" name="modoRadio" value="conteo" checked> Solo contar partidas ganadas</label>
+    <label class="radioLinea"><input type="radio" name="modoRadio" value="puntaje"> Puntaje acumulado (pierde el que llega a X)</label>
+    <input type="number" id="limiteInput" placeholder="Puntaje límite (ej 100)" value="100">
     <button class="rol" onclick="soyA()">Soy el ANFITRIÓN (reparto yo)</button>
     <button class="rol" onclick="soyB()">Me UNO a la partida</button>
     <button id="btnReconectar" class="oculto btnSec" onclick="reconectar()">Reconectar (recuperé una partida)</button>
@@ -159,6 +167,7 @@
   </div>
 
   <div id="zonaJuego" class="oculto">
+    <div id="marcador"></div>
     <div id="estadoTurno"></div>
     <div id="msgValidacion" class="oculto"></div>
     <div class="paso mesaWrap">
@@ -185,9 +194,9 @@ function diag(t){ const d=$('diag'); d.textContent += "\n"+t; d.scrollTop=d.scro
 function setDiag(t){ $('diag').textContent=t; }
 
 /* ---------- Persistencia ---------- */
-const CLAVE = "rummikub_estado_v3";
+const CLAVE = "rummikub_estado_v4";
 function guardar() {
-  try { localStorage.setItem(CLAVE, JSON.stringify({ atril, fichasEnPozo, mesa, turnoDe, numeroTurno, esAnfitrion, yaAbri, pozoReal, hayJuego:true })); } catch(e){}
+  try { localStorage.setItem(CLAVE, JSON.stringify({ atril, fichasEnPozo, mesa, turnoDe, numeroTurno, esAnfitrion, yaAbri, pozoReal, nombres, modoJuego, limitePuntaje, victorias, puntos, serieTerminada, ganadorSerie, hayJuego:true })); } catch(e){}
 }
 function cargarGuardado() { try { const s=localStorage.getItem(CLAVE); return s?JSON.parse(s):null; } catch(e){ return null; } }
 function borrarPartida() {
@@ -221,8 +230,6 @@ function crearPC(){
   let listo=false; let nCand=0, nHost=0, nSrflx=0, nRelay=0;
   const terminar=()=>{ if(listo)return; listo=true;
     diag("ICE listo. candidatos="+nCand+" (host="+nHost+" srflx="+nSrflx+" relay="+nRelay+")");
-    if(nSrflx===0) diag("⚠️ Sin candidatos públicos (srflx). El STUN no respondió: en redes distintas NO va a conectar.");
-    if(nRelay===0) diag("⚠️ Sin candidatos relay (TURN no respondió a tiempo).");
     const code=btoa(JSON.stringify(pc.localDescription));
     if(esAnfitrion){ $('ofertaOut').value=code; mostrarQR('qrOferta',code); }
     else { $('respuestaOut').value=code; mostrarQR('qrRespuesta',code); }
@@ -252,8 +259,9 @@ function usarCanal(dc){
     $('zonaEstado').classList.remove('oculto');
     $('zonaJuego').classList.remove('oculto');
     setLog("✅ ¡Conectado!"); pedirWakeLock();
+    enviar({tipo:"nombre", id:miId(), nombre:nombres[miId()]});
     if(esAnfitrion && !recuperado) repartir();
-    else { render(); actualizarUI(); pedirEstado(); }
+    else { render(); actualizarUI(); actualizarMarcador(); pedirEstado(); }
   };
   dc.onmessage=(e)=>manejarMensaje(JSON.parse(e.data));
   dc.onclose=()=>{ log("❌ Canal cerrado."); diag("❌ Canal cerrado."); soltarWakeLock(); mostrarAviso("Se cortó la conexión. Recargá y tocá 'Reconectar'."); };
@@ -261,9 +269,19 @@ function usarCanal(dc){
 function enviar(o){ if(dataChannel && dataChannel.readyState==="open") dataChannel.send(JSON.stringify(o)); }
 function canalAbierto(){ return dataChannel && dataChannel.readyState==="open"; }
 
-function soyA(){ esAnfitrion=true; $('elegirRol').classList.add('oculto'); $('flujoA').classList.remove('oculto');
-  setDiag("Soy ANFITRIÓN."); crearPC(); usarCanal(pc.createDataChannel("juego")); pc.createOffer().then(o=>pc.setLocalDescription(o)); }
-function soyB(){ $('elegirRol').classList.add('oculto'); $('flujoB').classList.remove('oculto'); setDiag("Soy INVITADO. Esperando escanear/pegar la invitación."); }
+function soyA(){
+  esAnfitrion=true;
+  nombres.A = $('miNombreInput').value.trim() || "Anfitrión";
+  modoJuego = document.querySelector('input[name="modoRadio"]:checked').value;
+  limitePuntaje = parseInt($('limiteInput').value) || 100;
+  $('elegirRol').classList.add('oculto'); $('flujoA').classList.remove('oculto');
+  setDiag("Soy ANFITRIÓN."); crearPC(); usarCanal(pc.createDataChannel("juego")); pc.createOffer().then(o=>pc.setLocalDescription(o));
+}
+function soyB(){
+  nombres.B = $('miNombreInput').value.trim() || "Invitado";
+  $('elegirRol').classList.add('oculto'); $('flujoB').classList.remove('oculto');
+  setDiag("Soy INVITADO. Esperando escanear/pegar la invitación.");
+}
 async function unirseB(){
   const t=$('ofertaIn').value.trim(); if(!t){alert("Escaneá o pegá la invitación");return;}
   try{
@@ -273,7 +291,7 @@ async function unirseB(){
     diag("Invitación aceptada. Generando respuesta...");
     const a=await pc.createAnswer(); await pc.setLocalDescription(a);
     $('pasoBResp').classList.remove('oculto');
-  }catch(e){ diag("❌ Error al unirse: "+e.message+"\n(¿código incompleto o vencido?)"); }
+  }catch(e){ diag("❌ Error al unirse: "+e.message); }
 }
 async function confirmarA(){
   const t=$('respuestaIn').value.trim(); if(!t){alert("Escaneá o pegá la respuesta");return;}
@@ -281,7 +299,7 @@ async function confirmarA(){
     diag("Anfitrión: aplicando respuesta del invitado...");
     await pc.setRemoteDescription(JSON.parse(atob(t)));
     diag("Respuesta aplicada. Esperando que se abra el canal...");
-  }catch(e){ diag("❌ Error al conectar: "+e.message+"\n(¿respuesta incompleta o vencida?)"); }
+  }catch(e){ diag("❌ Error al conectar: "+e.message); }
 }
 function copiar(id){ const e=$(id); e.select(); navigator.clipboard.writeText(e.value).then(()=>alert("¡Copiado!"),()=>{document.execCommand('copy');alert("¡Copiado!");}); }
 function reconectar(){ const g=cargarGuardado(); if(!g){alert("No hay partida guardada");return;} if(g.esAnfitrion)soyA(); else soyB(); }
@@ -318,12 +336,17 @@ let turnoDe=null, numeroTurno=0;
 let reproduciendo=false, recuperado=false, yaAbri=false, partidaTerminada=false;
 let inicioReproduccion=0;
 let atrilInicioTurno=null, mesaInicioTurno=null, movimientos=[];
+let nombres={A:"Jugador A", B:"Jugador B"};
+let modoJuego="conteo", limitePuntaje=100;
+let victorias={A:0,B:0}, puntos={A:0,B:0};
+let serieTerminada=false, ganadorSerie=null;
 
 function miId(){ return esAnfitrion ? "A" : "B"; }
 function rivalId(){ return esAnfitrion ? "B" : "A"; }
 function esMiTurno(){ return turnoDe === miId(); }
 
 function fichasAtril(){ return atril.filter(x=>x); }
+function calcularPuntosAtril(){ let s=0; for(const f of fichasAtril()) s += f.comodin?30:f.num; return s; }
 function crearMazo(){
   const m=[]; let id=0;
   for(let c=0;c<2;c++) for(const col of COLORES) for(let n=1;n<=13;n++) m.push({id:id++,num:n,color:col});
@@ -339,29 +362,32 @@ function repartir(){
   turnoDe = Math.random()<0.5 ? "A" : "B";
   numeroTurno = 1;
   mesa=new Array(MESA_CELDAS).fill(null);
-  enviar({tipo:"reparto",mano:mB,pozo:fichasEnPozo,turnoDe,numeroTurno});
+  enviar({tipo:"reparto",mano:mB,pozo:fichasEnPozo,turnoDe,numeroTurno,modoJuego,limitePuntaje});
   atril=new Array(ATRIL_CELDAS).fill(null); mA.forEach(f=>ponerEnAtril(f));
   yaAbri=false; partidaTerminada=false; reproduciendo=false;
   $('btnNuevaPartida').classList.add('oculto');
   limpiarValidacion();
-  ordenarAtril(true); iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
+  ordenarAtril(true); iniciarTurnoSiCorresponde(); render(); actualizarUI(); actualizarMarcador(); guardar();
 }
 
 function nuevaPartida(){
   if(!canalAbierto()){ mostrarAviso("No hay conexión. Recargá y tocá 'Reconectar'."); return; }
+  if(serieTerminada){ victorias={A:0,B:0}; puntos={A:0,B:0}; serieTerminada=false; ganadorSerie=null; }
   if(esAnfitrion) repartir();
   else { enviar({tipo:"pedirNuevaPartida"}); log("⏳ Pidiendo nueva partida al anfitrión..."); }
 }
 
 function manejarMensaje(msg){
-  if(msg.tipo==="reparto"){
+  if(msg.tipo==="nombre"){ nombres[msg.id]=msg.nombre; actualizarUI(); actualizarMarcador(); guardar(); }
+  else if(msg.tipo==="reparto"){
     atril=new Array(ATRIL_CELDAS).fill(null); msg.mano.forEach(f=>ponerEnAtril(f));
     mesa=new Array(MESA_CELDAS).fill(null);
     fichasEnPozo=msg.pozo; turnoDe=msg.turnoDe; numeroTurno=msg.numeroTurno;
+    modoJuego=msg.modoJuego||"conteo"; limitePuntaje=msg.limitePuntaje||100;
     yaAbri=false; partidaTerminada=false; reproduciendo=false;
     $('btnNuevaPartida').classList.add('oculto');
     limpiarValidacion();
-    ordenarAtril(true); iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
+    ordenarAtril(true); iniciarTurnoSiCorresponde(); render(); actualizarUI(); actualizarMarcador(); guardar();
   }
   else if(msg.tipo==="pedirNuevaPartida"){ if(esAnfitrion) repartir(); }
   else if(msg.tipo==="jugada"){ reproducirJugada(msg); }
@@ -400,11 +426,31 @@ function manejarMensaje(msg){
       else { enviar({tipo:"estado",mesa,pozo:fichasEnPozo,turnoDe,numeroTurno}); }
     }
   }
+  else if(msg.tipo==="resultadoMano"){
+    puntos[msg.perdedorId] = (puntos[msg.perdedorId]||0) + msg.puntos;
+    comprobarFinSerie();
+    actualizarMarcador(); guardar();
+  }
 }
 function pedirEstado(){ if(!canalAbierto()){ mostrarAviso("No hay conexión activa. Recargá y tocá 'Reconectar'."); return; } reproduciendo=false; actualizarUI(); enviar({tipo:"pedirEstado"}); }
 
 function iniciarTurnoSiCorresponde(){
   if(esMiTurno()){ atrilInicioTurno=JSON.parse(JSON.stringify(atril)); mesaInicioTurno=JSON.parse(JSON.stringify(mesa)); movimientos=[]; }
+}
+
+/* ---------- Marcador de la serie ---------- */
+function comprobarFinSerie(){
+  if(modoJuego!=="puntaje") return;
+  if((puntos.A||0) >= limitePuntaje){ serieTerminada=true; ganadorSerie="B"; }
+  else if((puntos.B||0) >= limitePuntaje){ serieTerminada=true; ganadorSerie="A"; }
+}
+function actualizarMarcador(){
+  const m=$('marcador');
+  let txt = nombres.A+": "+victorias.A+" 🏆";
+  if(modoJuego==="puntaje") txt += " ("+(puntos.A||0)+"/"+limitePuntaje+" pts)";
+  txt += "   |   " + nombres.B+": "+victorias.B+" 🏆";
+  if(modoJuego==="puntaje") txt += " ("+(puntos.B||0)+"/"+limitePuntaje+" pts)";
+  m.textContent = txt;
 }
 
 /* ---------- Ordenar atril ---------- */
@@ -489,6 +535,7 @@ function enviarJugada(){
   const gano = fichasAtril().length===0;
   turnoDe = rivalId(); numeroTurno++;
   enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos,gano,turnoDe,numeroTurno});
+  if(gano){ victorias[miId()]++; actualizarMarcador(); guardar(); }
   actualizarUI(); guardar();
   if(gano) finPartida(true);
 }
@@ -533,7 +580,17 @@ async function reproducirJugada(msg){
     mesa=msg.mesa; fichasEnPozo=msg.pozo;
     turnoDe=msg.turnoDe; numeroTurno=msg.numeroTurno;
     reproduciendo=false;
-    if(msg.gano){ render(); actualizarUI(); finPartida(false); return; }
+    if(msg.gano){
+      victorias[rivalId()]++;
+      if(modoJuego==="puntaje"){
+        const p=calcularPuntosAtril();
+        puntos[miId()]=(puntos[miId()]||0)+p;
+        enviar({tipo:"resultadoMano", perdedorId:miId(), puntos:p});
+        comprobarFinSerie();
+      }
+      actualizarMarcador(); guardar();
+      render(); actualizarUI(); finPartida(false); return;
+    }
     iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
   }
 }
@@ -541,10 +598,18 @@ function esperar(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
 function finPartida(gane){
   partidaTerminada=true;
-  const e=$('estadoTurno'); e.textContent=gane?"🏆 ¡Ganaste!":"😔 Ganó tu rival"; e.className=gane?"miTurno":"turnoRival";
+  const e=$('estadoTurno');
+  if(serieTerminada){
+    e.textContent = "🏁 Fin de la serie: gana "+nombres[ganadorSerie]+"!";
+    e.className = "miTurno";
+  } else {
+    e.textContent = gane ? "🏆 ¡Ganó "+nombres[miId()]+"!" : "😔 Ganó "+nombres[rivalId()];
+    e.className = gane?"miTurno":"turnoRival";
+  }
+  $('btnNuevaPartida').textContent = serieTerminada ? "🏆 Nueva serie" : "🔄 Nueva partida";
   ['btnDeshacer','btnEnviar','btnRobar'].forEach(id=>$(id).disabled=true);
   $('btnNuevaPartida').classList.remove('oculto');
-  try{ localStorage.removeItem(CLAVE); }catch(e){}
+  soltarWakeLock(); try{ localStorage.removeItem(CLAVE); }catch(e){}
 }
 
 /* ---------- Latido + vigilante ---------- */
@@ -564,9 +629,10 @@ setInterval(()=>{
 function actualizarUI(){
   const e=$('estadoTurno');
   if(partidaTerminada) return;
-  if(reproduciendo){ e.textContent="👀 Mirando la jugada del rival..."; e.className="turnoRival"; }
-  else if(esMiTurno()){ e.textContent="🟢 Tu turno"; e.className="miTurno"; }
-  else { e.textContent="⏳ Turno del rival"; e.className="turnoRival"; }
+  const nombreEnTurno = nombres[turnoDe] || "...";
+  if(reproduciendo){ e.textContent="👀 Mirando la jugada de "+nombreEnTurno+"..."; e.className="turnoRival"; }
+  else if(esMiTurno()){ e.textContent="🟢 Tu turno, "+nombreEnTurno; e.className="miTurno"; }
+  else { e.textContent="⏳ Turno de "+nombreEnTurno; e.className="turnoRival"; }
   $('abierto').textContent = yaAbri?"· ✅ abierto":"· 🔒 falta abrir (30)";
   const bloq=!esMiTurno()||reproduciendo;
   $('btnDeshacer').disabled=bloq; $('btnEnviar').disabled=bloq; $('btnRobar').disabled=bloq;
@@ -684,6 +750,10 @@ window.addEventListener("load",()=>{
     mesa=g.mesa||new Array(MESA_CELDAS).fill(null);
     fichasEnPozo=g.fichasEnPozo; turnoDe=g.turnoDe; numeroTurno=g.numeroTurno||0;
     esAnfitrion=g.esAnfitrion; yaAbri=!!g.yaAbri; pozoReal=g.pozoReal||[]; recuperado=true;
+    nombres=g.nombres||{A:"Jugador A",B:"Jugador B"};
+    modoJuego=g.modoJuego||"conteo"; limitePuntaje=g.limitePuntaje||100;
+    victorias=g.victorias||{A:0,B:0}; puntos=g.puntos||{A:0,B:0};
+    serieTerminada=!!g.serieTerminada; ganadorSerie=g.ganadorSerie||null;
     atrilInicioTurno=JSON.parse(JSON.stringify(atril)); mesaInicioTurno=JSON.parse(JSON.stringify(mesa));
     mostrarAviso("Se recuperó tu partida. Tocá 'Reconectar' para volver a unirte.");
     $('btnReconectar').classList.remove('oculto'); $('btnBorrar').classList.remove('oculto');
