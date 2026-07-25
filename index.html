@@ -24,6 +24,7 @@
   #diag { background:#111; color:#7fdfff; padding:6px; font-size:11px; border-radius:8px; white-space:pre-wrap; max-height:200px; overflow-y:auto; margin:6px 0; font-family:monospace; }
   .rol { font-size:18px; padding:16px; }
   #marcador { text-align:center; font-size:14px; padding:6px; background:#154; border-radius:8px; margin:4px 0; color:#fff; }
+  #reloj { text-align:center; padding:6px; border-radius:8px; margin:4px 0; color:#fff; font-weight:bold; background:#333; }
   #estadoTurno { font-weight:bold; font-size:17px; text-align:center; padding:7px; border-radius:8px; margin:5px 0; }
   .miTurno { background:#2e7d32; }
   .turnoRival { background:#8a5a00; }
@@ -84,7 +85,7 @@
     #zonaEstado { padding:3px; margin:2px 0; }
     #log { max-height:22px; min-height:0; font-size:10px; }
     #zonaJuego { display:grid; grid-template-columns: 1fr 400px; gap:6px; align-items:start; }
-    #zonaJuego #estadoTurno, #zonaJuego #marcador { grid-column: 1 / -1; margin:2px 0; padding:3px; font-size:14px; }
+    #zonaJuego #estadoTurno, #zonaJuego #marcador, #zonaJuego #reloj { grid-column: 1 / -1; margin:2px 0; padding:3px; font-size:14px; }
     #zonaJuego #msgValidacion { grid-column: 1 / -1; margin:2px 0; padding:3px; font-size:12px; }
     #zonaJuego > .paso:nth-of-type(1) { grid-column: 1; margin:0; }
     #zonaJuego > .paso:nth-of-type(2) { grid-column: 2; margin:0; padding:4px; }
@@ -113,6 +114,12 @@
     <label class="radioLinea"><input type="radio" name="modoRadio" value="conteo" checked> Solo contar partidas ganadas</label>
     <label class="radioLinea"><input type="radio" name="modoRadio" value="puntaje"> Puntaje acumulado (pierde el que llega a X)</label>
     <input type="number" id="limiteInput" placeholder="Puntaje límite (ej 100)" value="100">
+    <div class="titulo" style="margin-top:10px;">Reloj (opcional)</div>
+    <label class="radioLinea"><input type="radio" name="relojRadio" value="ninguno" checked> Sin reloj</label>
+    <label class="radioLinea"><input type="radio" name="relojRadio" value="arena"> Arena: segundos por turno</label>
+    <input type="number" id="arenaInput" placeholder="Segundos por turno (ej 60)" value="60">
+    <label class="radioLinea"><input type="radio" name="relojRadio" value="ajedrez"> Ajedrez: minutos totales por jugador</label>
+    <input type="number" id="ajedrezInput" placeholder="Minutos totales (ej 5)" value="5">
     <button class="rol" onclick="soyA()">Soy el ANFITRIÓN (reparto yo)</button>
     <button class="rol" onclick="soyB()">Me UNO a la partida</button>
     <button id="btnReconectar" class="oculto btnSec" onclick="reconectar()">Reconectar (recuperé una partida)</button>
@@ -169,6 +176,7 @@
 
   <div id="zonaJuego" class="oculto">
     <div id="marcador"></div>
+    <div id="reloj" class="oculto"></div>
     <div id="estadoTurno"></div>
     <div id="msgValidacion" class="oculto"></div>
     <div class="paso mesaWrap">
@@ -195,9 +203,9 @@ function diag(t){ const d=$('diag'); d.textContent += "\n"+t; d.scrollTop=d.scro
 function setDiag(t){ $('diag').textContent=t; }
 
 /* ---------- Persistencia ---------- */
-const CLAVE = "rummikub_estado_v5";
+const CLAVE = "rummikub_estado_v6";
 function guardar() {
-  try { localStorage.setItem(CLAVE, JSON.stringify({ atril, fichasEnPozo, mesa, turnoInicial, numeroTurno, esAnfitrion, yaAbri, pozoReal, nombres, modoJuego, limitePuntaje, victorias, puntos, serieTerminada, ganadorSerie, hayJuego:true })); } catch(e){}
+  try { localStorage.setItem(CLAVE, JSON.stringify({ atril, fichasEnPozo, mesa, turnoInicial, numeroTurno, esAnfitrion, yaAbri, pozoReal, nombres, modoJuego, limitePuntaje, victorias, puntos, serieTerminada, ganadorSerie, contadorRival, relojTipo, relojArenaSeg, relojAjedrezMin, tiempoRestante, turnoInicioTS, hayJuego:true })); } catch(e){}
 }
 function cargarGuardado() { try { const s=localStorage.getItem(CLAVE); return s?JSON.parse(s):null; } catch(e){ return null; } }
 function borrarPartida() {
@@ -275,6 +283,9 @@ function soyA(){
   nombres.A = $('miNombreInput').value.trim() || "Anfitrión";
   modoJuego = document.querySelector('input[name="modoRadio"]:checked').value;
   limitePuntaje = parseInt($('limiteInput').value) || 100;
+  relojTipo = document.querySelector('input[name="relojRadio"]:checked').value;
+  relojArenaSeg = parseInt($('arenaInput').value) || 60;
+  relojAjedrezMin = parseInt($('ajedrezInput').value) || 5;
   $('elegirRol').classList.add('oculto'); $('flujoA').classList.remove('oculto');
   setDiag("Soy ANFITRIÓN."); crearPC(); usarCanal(pc.createDataChannel("juego")); pc.createOffer().then(o=>pc.setLocalDescription(o));
 }
@@ -341,6 +352,9 @@ let nombres={A:"Jugador A", B:"Jugador B"};
 let modoJuego="conteo", limitePuntaje=100;
 let victorias={A:0,B:0}, puntos={A:0,B:0};
 let serieTerminada=false, ganadorSerie=null;
+let contadorRival=14;
+let relojTipo="ninguno", relojArenaSeg=60, relojAjedrezMin=5;
+let tiempoRestante={A:0,B:0}, turnoInicioTS=null;
 
 function miId(){ return esAnfitrion ? "A" : "B"; }
 function rivalId(){ return esAnfitrion ? "B" : "A"; }
@@ -368,7 +382,10 @@ function repartir(){
   turnoInicial = Math.random()<0.5 ? "A" : "B";
   numeroTurno = 1;
   mesa=new Array(MESA_CELDAS).fill(null);
-  enviar({tipo:"reparto",mano:mB,pozo:fichasEnPozo,turnoInicial,numeroTurno,modoJuego,limitePuntaje});
+  contadorRival = 14;
+  turnoInicioTS = Date.now();
+  if(relojTipo==="ajedrez") tiempoRestante = { A: relojAjedrezMin*60, B: relojAjedrezMin*60 };
+  enviar({tipo:"reparto",mano:mB,pozo:fichasEnPozo,turnoInicial,numeroTurno,modoJuego,limitePuntaje,relojTipo,relojArenaSeg,relojAjedrezMin,tiempoRestante,ts:turnoInicioTS});
   atril=new Array(ATRIL_CELDAS).fill(null); mA.forEach(f=>ponerEnAtril(f));
   yaAbri=false; partidaTerminada=false; reproduciendo=false;
   $('btnNuevaPartida').classList.add('oculto');
@@ -390,6 +407,9 @@ function manejarMensaje(msg){
     mesa=new Array(MESA_CELDAS).fill(null);
     fichasEnPozo=msg.pozo; turnoInicial=msg.turnoInicial; numeroTurno=msg.numeroTurno;
     modoJuego=msg.modoJuego||"conteo"; limitePuntaje=msg.limitePuntaje||100;
+    relojTipo=msg.relojTipo||"ninguno"; relojArenaSeg=msg.relojArenaSeg||60; relojAjedrezMin=msg.relojAjedrezMin||5;
+    tiempoRestante=msg.tiempoRestante||{A:0,B:0}; turnoInicioTS=msg.ts||Date.now();
+    contadorRival=14;
     yaAbri=false; partidaTerminada=false; reproduciendo=false;
     $('btnNuevaPartida').classList.add('oculto');
     limpiarValidacion();
@@ -400,24 +420,33 @@ function manejarMensaje(msg){
   else if(msg.tipo==="pedirFicha"){
     if(esAnfitrion){
       const f=pozoReal.shift()||null; fichasEnPozo=pozoReal.length;
+      if(relojTipo==="ajedrez"){
+        const elapsed=Math.floor((Date.now()-(turnoInicioTS||Date.now()))/1000);
+        tiempoRestante[rivalId()]=Math.max(0,(tiempoRestante[rivalId()]||0)-elapsed);
+      }
       numeroTurno++;
-      enviar({tipo:"fichaRobada",ficha:f,pozo:fichasEnPozo,numeroTurno});
+      turnoInicioTS=Date.now();
+      enviar({tipo:"fichaRobada",ficha:f,pozo:fichasEnPozo,numeroTurno,ts:turnoInicioTS,tiempoRestante});
       iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
     }
   }
   else if(msg.tipo==="fichaRobada"){
     if(msg.ficha) ponerEnAtril(msg.ficha);
     fichasEnPozo=msg.pozo; numeroTurno=msg.numeroTurno;
+    turnoInicioTS=msg.ts||Date.now(); if(msg.tiempoRestante) tiempoRestante=msg.tiempoRestante;
+    enviar({tipo:"conteo", n:fichasAtril().length});
     iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
   }
+  else if(msg.tipo==="conteo"){ contadorRival=msg.n; actualizarMarcador(); }
   else if(msg.tipo==="pedirEstado"){
-    enviar({tipo:"estado",mesa,pozo:fichasEnPozo,numeroTurno});
+    enviar({tipo:"estado",mesa,pozo:fichasEnPozo,numeroTurno,conteo:fichasAtril().length});
   }
   else if(msg.tipo==="ping"){
     if(msg.numeroTurno > numeroTurno){ enviar({tipo:"pedirEstado"}); }
-    else if(msg.numeroTurno < numeroTurno){ enviar({tipo:"estado",mesa,pozo:fichasEnPozo,numeroTurno}); }
+    else if(msg.numeroTurno < numeroTurno){ enviar({tipo:"estado",mesa,pozo:fichasEnPozo,numeroTurno,conteo:fichasAtril().length}); }
   }
   else if(msg.tipo==="estado"){
+    if(msg.conteo!=null){ contadorRival=msg.conteo; actualizarMarcador(); }
     if(msg.numeroTurno > numeroTurno){
       reproduciendo=false;
       mesa=msg.mesa; fichasEnPozo=msg.pozo; numeroTurno=msg.numeroTurno;
@@ -449,8 +478,31 @@ function actualizarMarcador(){
   if(modoJuego==="puntaje") txt += " ("+(puntos.A||0)+"/"+limitePuntaje+" pts)";
   txt += "   |   " + nombres.B+": "+victorias.B+" 🏆";
   if(modoJuego==="puntaje") txt += " ("+(puntos.B||0)+"/"+limitePuntaje+" pts)";
+  txt += "   |   Fichas de "+nombres[rivalId()]+": "+contadorRival;
   m.textContent = txt;
 }
+
+/* ---------- Reloj ---------- */
+function actualizarReloj(){
+  const d=$('reloj');
+  if(relojTipo==="ninguno" || !turnoInicioTS || partidaTerminada || reproduciendo){ d.classList.add('oculto'); return; }
+  d.classList.remove('oculto');
+  const elapsed = Math.floor((Date.now()-turnoInicioTS)/1000);
+  if(relojTipo==="arena"){
+    const restante = relojArenaSeg - elapsed;
+    if(restante<=0){ d.textContent="⏰ ¡Se acabó el tiempo del turno de "+nombres[turnoActual()]+"!"; d.style.background="#a11"; }
+    else { d.textContent="⏳ "+restante+"s de turno"; d.style.background = restante<=10?"#a11":"#333"; }
+  } else if(relojTipo==="ajedrez"){
+    const idT = turnoActual();
+    const base = (tiempoRestante[idT]||0);
+    const restante = Math.max(0, base - elapsed);
+    const mm=Math.floor(restante/60), ss=restante%60;
+    d.textContent = "⏳ "+nombres[idT]+": "+mm+":"+(ss<10?"0":"")+ss;
+    d.style.background = restante<=30?"#a11":"#333";
+    if(restante<=0) d.textContent += " — ¡tiempo agotado!";
+  }
+}
+setInterval(actualizarReloj, 1000);
 
 /* ---------- Ordenar atril ---------- */
 function ordenarAtril(silencioso){
@@ -532,8 +584,13 @@ function enviarJugada(){
   if(!yaAbri) yaAbri=true;
   limpiarValidacion();
   const gano = fichasAtril().length===0;
+  if(relojTipo==="ajedrez"){
+    const elapsed=Math.floor((Date.now()-(turnoInicioTS||Date.now()))/1000);
+    tiempoRestante[miId()]=Math.max(0,(tiempoRestante[miId()]||0)-elapsed);
+  }
   numeroTurno++;
-  enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos,gano,numeroTurno});
+  turnoInicioTS=Date.now();
+  enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos,gano,numeroTurno,conteo:fichasAtril().length,ts:turnoInicioTS,tiempoRestante});
   if(gano){ victorias[miId()]++; actualizarMarcador(); }
   actualizarUI(); guardar();
   if(gano) finPartida(true);
@@ -546,8 +603,13 @@ function robar(){
   if(esAnfitrion){
     const f=pozoReal.shift()||null; if(f) ponerEnAtril(f);
     fichasEnPozo=pozoReal.length;
+    if(relojTipo==="ajedrez"){
+      const elapsed=Math.floor((Date.now()-(turnoInicioTS||Date.now()))/1000);
+      tiempoRestante[miId()]=Math.max(0,(tiempoRestante[miId()]||0)-elapsed);
+    }
     numeroTurno++;
-    enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos:[],robo:true,numeroTurno});
+    turnoInicioTS=Date.now();
+    enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos:[],robo:true,numeroTurno,conteo:fichasAtril().length,ts:turnoInicioTS,tiempoRestante});
     iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
   } else { enviar({tipo:"pedirFicha"}); log("⏳ Pidiendo ficha..."); }
 }
@@ -577,6 +639,8 @@ async function reproducirJugada(msg){
   } catch(e){ }
   finally{
     mesa=msg.mesa; fichasEnPozo=msg.pozo; numeroTurno=msg.numeroTurno;
+    turnoInicioTS=msg.ts||Date.now(); if(msg.tiempoRestante) tiempoRestante=msg.tiempoRestante;
+    if(msg.conteo!=null) contadorRival=msg.conteo;
     reproduciendo=false;
     if(msg.gano){
       victorias[rivalId()]++;
@@ -589,6 +653,7 @@ async function reproducirJugada(msg){
       actualizarMarcador(); guardar();
       render(); actualizarUI(); finPartida(false); return;
     }
+    actualizarMarcador();
     iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
   }
 }
@@ -607,6 +672,7 @@ function finPartida(gane){
   $('btnNuevaPartida').textContent = serieTerminada ? "🏆 Nueva serie" : "🔄 Nueva partida";
   ['btnDeshacer','btnEnviar','btnRobar'].forEach(id=>$(id).disabled=true);
   $('btnNuevaPartida').classList.remove('oculto');
+  $('reloj').classList.add('oculto');
   soltarWakeLock(); try{ localStorage.removeItem(CLAVE); }catch(e){}
 }
 
@@ -802,6 +868,9 @@ window.addEventListener("load",()=>{
     modoJuego=g.modoJuego||"conteo"; limitePuntaje=g.limitePuntaje||100;
     victorias=g.victorias||{A:0,B:0}; puntos=g.puntos||{A:0,B:0};
     serieTerminada=!!g.serieTerminada; ganadorSerie=g.ganadorSerie||null;
+    contadorRival=g.contadorRival!=null?g.contadorRival:14;
+    relojTipo=g.relojTipo||"ninguno"; relojArenaSeg=g.relojArenaSeg||60; relojAjedrezMin=g.relojAjedrezMin||5;
+    tiempoRestante=g.tiempoRestante||{A:0,B:0}; turnoInicioTS=g.turnoInicioTS||Date.now();
     atrilInicioTurno=JSON.parse(JSON.stringify(atril)); mesaInicioTurno=JSON.parse(JSON.stringify(mesa));
     mostrarAviso("Se recuperó tu partida. Tocá 'Reconectar' para volver a unirte.");
     $('btnReconectar').classList.remove('oculto'); $('btnBorrar').classList.remove('oculto');
