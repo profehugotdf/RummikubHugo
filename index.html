@@ -194,9 +194,9 @@ function diag(t){ const d=$('diag'); d.textContent += "\n"+t; d.scrollTop=d.scro
 function setDiag(t){ $('diag').textContent=t; }
 
 /* ---------- Persistencia ---------- */
-const CLAVE = "rummikub_estado_v4";
+const CLAVE = "rummikub_estado_v5";
 function guardar() {
-  try { localStorage.setItem(CLAVE, JSON.stringify({ atril, fichasEnPozo, mesa, turnoDe, numeroTurno, esAnfitrion, yaAbri, pozoReal, nombres, modoJuego, limitePuntaje, victorias, puntos, serieTerminada, ganadorSerie, hayJuego:true })); } catch(e){}
+  try { localStorage.setItem(CLAVE, JSON.stringify({ atril, fichasEnPozo, mesa, turnoInicial, numeroTurno, esAnfitrion, yaAbri, pozoReal, nombres, modoJuego, limitePuntaje, victorias, puntos, serieTerminada, ganadorSerie, hayJuego:true })); } catch(e){}
 }
 function cargarGuardado() { try { const s=localStorage.getItem(CLAVE); return s?JSON.parse(s):null; } catch(e){ return null; } }
 function borrarPartida() {
@@ -332,7 +332,7 @@ const VEL_REPLAY=400;
 let atril=new Array(ATRIL_CELDAS).fill(null);
 let mesa=new Array(MESA_CELDAS).fill(null);
 let pozoReal=[], fichasEnPozo=0;
-let turnoDe=null, numeroTurno=0;
+let turnoInicial=null, numeroTurno=0;
 let reproduciendo=false, recuperado=false, yaAbri=false, partidaTerminada=false;
 let inicioReproduccion=0;
 let atrilInicioTurno=null, mesaInicioTurno=null, movimientos=[];
@@ -343,7 +343,13 @@ let serieTerminada=false, ganadorSerie=null;
 
 function miId(){ return esAnfitrion ? "A" : "B"; }
 function rivalId(){ return esAnfitrion ? "B" : "A"; }
-function esMiTurno(){ return turnoDe === miId(); }
+// El turno se DERIVA de turnoInicial + paridad de numeroTurno. Nunca se transmite por separado.
+function turnoActual(){
+  if(!turnoInicial) return null;
+  const impar = (numeroTurno % 2) === 1;
+  return impar ? turnoInicial : (turnoInicial==="A" ? "B" : "A");
+}
+function esMiTurno(){ return turnoActual() === miId(); }
 
 function fichasAtril(){ return atril.filter(x=>x); }
 function calcularPuntosAtril(){ let s=0; for(const f of fichasAtril()) s += f.comodin?30:f.num; return s; }
@@ -359,10 +365,10 @@ function repartir(){
   const mazo=mezclar(crearMazo());
   const mA=mazo.splice(0,14), mB=mazo.splice(0,14);
   pozoReal=mazo; fichasEnPozo=pozoReal.length;
-  turnoDe = Math.random()<0.5 ? "A" : "B";
+  turnoInicial = Math.random()<0.5 ? "A" : "B";
   numeroTurno = 1;
   mesa=new Array(MESA_CELDAS).fill(null);
-  enviar({tipo:"reparto",mano:mB,pozo:fichasEnPozo,turnoDe,numeroTurno,modoJuego,limitePuntaje});
+  enviar({tipo:"reparto",mano:mB,pozo:fichasEnPozo,turnoInicial,numeroTurno,modoJuego,limitePuntaje});
   atril=new Array(ATRIL_CELDAS).fill(null); mA.forEach(f=>ponerEnAtril(f));
   yaAbri=false; partidaTerminada=false; reproduciendo=false;
   $('btnNuevaPartida').classList.add('oculto');
@@ -382,7 +388,7 @@ function manejarMensaje(msg){
   else if(msg.tipo==="reparto"){
     atril=new Array(ATRIL_CELDAS).fill(null); msg.mano.forEach(f=>ponerEnAtril(f));
     mesa=new Array(MESA_CELDAS).fill(null);
-    fichasEnPozo=msg.pozo; turnoDe=msg.turnoDe; numeroTurno=msg.numeroTurno;
+    fichasEnPozo=msg.pozo; turnoInicial=msg.turnoInicial; numeroTurno=msg.numeroTurno;
     modoJuego=msg.modoJuego||"conteo"; limitePuntaje=msg.limitePuntaje||100;
     yaAbri=false; partidaTerminada=false; reproduciendo=false;
     $('btnNuevaPartida').classList.add('oculto');
@@ -394,36 +400,29 @@ function manejarMensaje(msg){
   else if(msg.tipo==="pedirFicha"){
     if(esAnfitrion){
       const f=pozoReal.shift()||null; fichasEnPozo=pozoReal.length;
-      turnoDe="A"; numeroTurno++;
-      enviar({tipo:"fichaRobada",ficha:f,pozo:fichasEnPozo,turnoDe,numeroTurno});
+      numeroTurno++;
+      enviar({tipo:"fichaRobada",ficha:f,pozo:fichasEnPozo,numeroTurno});
       iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
     }
   }
   else if(msg.tipo==="fichaRobada"){
     if(msg.ficha) ponerEnAtril(msg.ficha);
-    fichasEnPozo=msg.pozo; turnoDe=msg.turnoDe; numeroTurno=msg.numeroTurno;
-    render(); actualizarUI(); guardar();
+    fichasEnPozo=msg.pozo; numeroTurno=msg.numeroTurno;
+    iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
   }
   else if(msg.tipo==="pedirEstado"){
-    enviar({tipo:"estado",mesa,pozo:fichasEnPozo,turnoDe,numeroTurno});
+    enviar({tipo:"estado",mesa,pozo:fichasEnPozo,numeroTurno});
   }
   else if(msg.tipo==="ping"){
     if(msg.numeroTurno > numeroTurno){ enviar({tipo:"pedirEstado"}); }
-    else if(msg.numeroTurno < numeroTurno){ enviar({tipo:"estado",mesa,pozo:fichasEnPozo,turnoDe,numeroTurno}); }
-    else if(msg.turnoDe !== turnoDe){
-      if(esAnfitrion){ enviar({tipo:"estado",mesa,pozo:fichasEnPozo,turnoDe,numeroTurno}); log("⚠️ Desacuerdo de turno: corrijo yo."); }
-    }
+    else if(msg.numeroTurno < numeroTurno){ enviar({tipo:"estado",mesa,pozo:fichasEnPozo,numeroTurno}); }
   }
   else if(msg.tipo==="estado"){
     if(msg.numeroTurno > numeroTurno){
       reproduciendo=false;
-      mesa=msg.mesa; fichasEnPozo=msg.pozo; turnoDe=msg.turnoDe; numeroTurno=msg.numeroTurno;
+      mesa=msg.mesa; fichasEnPozo=msg.pozo; numeroTurno=msg.numeroTurno;
       iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
       log("🔄 Sincronizado (turno "+numeroTurno+").");
-    } else if(msg.numeroTurno===numeroTurno && turnoDe!==msg.turnoDe){
-      if(!esAnfitrion){ reproduciendo=false; turnoDe=msg.turnoDe; mesa=msg.mesa; fichasEnPozo=msg.pozo;
-        iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar(); log("🔄 Turno corregido por el anfitrión."); }
-      else { enviar({tipo:"estado",mesa,pozo:fichasEnPozo,turnoDe,numeroTurno}); }
     }
   }
   else if(msg.tipo==="resultadoMano"){
@@ -533,9 +532,9 @@ function enviarJugada(){
   if(!yaAbri) yaAbri=true;
   limpiarValidacion();
   const gano = fichasAtril().length===0;
-  turnoDe = rivalId(); numeroTurno++;
-  enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos,gano,turnoDe,numeroTurno});
-  if(gano){ victorias[miId()]++; actualizarMarcador(); guardar(); }
+  numeroTurno++;
+  enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos,gano,numeroTurno});
+  if(gano){ victorias[miId()]++; actualizarMarcador(); }
   actualizarUI(); guardar();
   if(gano) finPartida(true);
 }
@@ -547,9 +546,9 @@ function robar(){
   if(esAnfitrion){
     const f=pozoReal.shift()||null; if(f) ponerEnAtril(f);
     fichasEnPozo=pozoReal.length;
-    turnoDe="B"; numeroTurno++;
-    enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos:[],robo:true,turnoDe,numeroTurno});
-    render(); actualizarUI(); guardar();
+    numeroTurno++;
+    enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos:[],robo:true,numeroTurno});
+    iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
   } else { enviar({tipo:"pedirFicha"}); log("⏳ Pidiendo ficha..."); }
 }
 function mostrarValidacion(ok,t){ const m=$('msgValidacion'); m.textContent=t; m.className=ok?"bueno":"malo"; m.classList.remove('oculto'); }
@@ -577,8 +576,7 @@ async function reproducirJugada(msg){
     }
   } catch(e){ }
   finally{
-    mesa=msg.mesa; fichasEnPozo=msg.pozo;
-    turnoDe=msg.turnoDe; numeroTurno=msg.numeroTurno;
+    mesa=msg.mesa; fichasEnPozo=msg.pozo; numeroTurno=msg.numeroTurno;
     reproduciendo=false;
     if(msg.gano){
       victorias[rivalId()]++;
@@ -614,8 +612,8 @@ function finPartida(gane){
 
 /* ---------- Latido + vigilante ---------- */
 setInterval(()=>{
-  if(!canalAbierto() || partidaTerminada || turnoDe===null) return;
-  enviar({tipo:"ping", turnoDe, numeroTurno});
+  if(!canalAbierto() || partidaTerminada || turnoInicial===null) return;
+  enviar({tipo:"ping", numeroTurno});
 }, 4000);
 setInterval(()=>{
   if(reproduciendo && Date.now()-inicioReproduccion>15000){
@@ -629,7 +627,8 @@ setInterval(()=>{
 function actualizarUI(){
   const e=$('estadoTurno');
   if(partidaTerminada) return;
-  const nombreEnTurno = nombres[turnoDe] || "...";
+  const idEnTurno = turnoActual();
+  const nombreEnTurno = idEnTurno ? (nombres[idEnTurno]||"...") : "...";
   if(reproduciendo){ e.textContent="👀 Mirando la jugada de "+nombreEnTurno+"..."; e.className="turnoRival"; }
   else if(esMiTurno()){ e.textContent="🟢 Tu turno, "+nombreEnTurno; e.className="miTurno"; }
   else { e.textContent="⏳ Turno de "+nombreEnTurno; e.className="turnoRival"; }
@@ -748,7 +747,7 @@ window.addEventListener("load",()=>{
   if(g&&g.hayJuego){
     atril=g.atril||new Array(ATRIL_CELDAS).fill(null);
     mesa=g.mesa||new Array(MESA_CELDAS).fill(null);
-    fichasEnPozo=g.fichasEnPozo; turnoDe=g.turnoDe; numeroTurno=g.numeroTurno||0;
+    fichasEnPozo=g.fichasEnPozo; turnoInicial=g.turnoInicial; numeroTurno=g.numeroTurno||0;
     esAnfitrion=g.esAnfitrion; yaAbri=!!g.yaAbri; pozoReal=g.pozoReal||[]; recuperado=true;
     nombres=g.nombres||{A:"Jugador A",B:"Jugador B"};
     modoJuego=g.modoJuego||"conteo"; limitePuntaje=g.limitePuntaje||100;
