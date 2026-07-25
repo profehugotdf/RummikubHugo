@@ -63,6 +63,7 @@
   .celda.replay { background:rgba(0,150,255,.5); }
   .celda.invalida { background:rgba(255,0,0,.5); }
   .celda.nueva { outline:2px solid #00e5ff; }
+  .ficha.seleccionada { outline:3px solid #ffeb3b; box-shadow:0 0 8px 2px #ffeb3b !important; }
   .bloqueado { pointer-events:none; opacity:.9; }
 
   @media (max-height: 520px) and (max-width: 719px) {
@@ -343,7 +344,6 @@ let serieTerminada=false, ganadorSerie=null;
 
 function miId(){ return esAnfitrion ? "A" : "B"; }
 function rivalId(){ return esAnfitrion ? "B" : "A"; }
-// El turno se DERIVA de turnoInicial + paridad de numeroTurno. Nunca se transmite por separado.
 function turnoActual(){
   if(!turnoInicial) return null;
   const impar = (numeroTurno % 2) === 1;
@@ -522,7 +522,7 @@ function validarJugada(){
 function deshacer(){
   if(!esMiTurno()) return;
   atril=JSON.parse(JSON.stringify(atrilInicioTurno)); mesa=JSON.parse(JSON.stringify(mesaInicioTurno)); movimientos=[];
-  limpiarValidacion(); render(); guardar();
+  limpiarSeleccion(); limpiarValidacion(); render(); guardar();
 }
 function enviarJugada(){
   if(!esMiTurno()||partidaTerminada) return;
@@ -542,7 +542,7 @@ function robar(){
   if(!esMiTurno()||partidaTerminada) return;
   if(fichasEnPozo<=0){ alert("El pozo está vacío"); return; }
   atril=JSON.parse(JSON.stringify(atrilInicioTurno)); mesa=JSON.parse(JSON.stringify(mesaInicioTurno)); movimientos=[];
-  limpiarValidacion();
+  limpiarSeleccion(); limpiarValidacion();
   if(esAnfitrion){
     const f=pozoReal.shift()||null; if(f) ponerEnAtril(f);
     fichasEnPozo=pozoReal.length;
@@ -652,6 +652,7 @@ function renderMesa(){
   for(const m of movimientos){ if(m.desdeAtril && m.ficha) idsNuevos.add(m.ficha.id); }
   for(let i=0;i<MESA_CELDAS;i++){
     const cel=document.createElement("div"); cel.className="celda"; cel.dataset.celda=i; cel.dataset.zona="mesa";
+    cel.addEventListener("click", ()=> manejarToqueCelda("mesa", i, !mesa[i]));
     const f=mesa[i];
     if(f){ const d=crearFichaDiv(f); d.dataset.origen="mesa"; d.dataset.celdaOrigen=i; cel.appendChild(d);
       if(idsNuevos.has(f.id)) cel.classList.add("nueva"); }
@@ -662,6 +663,7 @@ function renderAtril(){
   const c=$('atril'); c.innerHTML="";
   for(let i=0;i<ATRIL_CELDAS;i++){
     const cel=document.createElement("div"); cel.className="celda"; cel.dataset.celda=i; cel.dataset.zona="atril";
+    cel.addEventListener("click", ()=> manejarToqueCelda("atril", i, !atril[i]));
     const f=atril[i];
     if(f){ const d=crearFichaDiv(f); d.dataset.origen="atril"; d.dataset.celdaOrigen=i; cel.appendChild(d); }
     c.appendChild(cel);
@@ -670,46 +672,93 @@ function renderAtril(){
   $('pozo').textContent=fichasEnPozo;
 }
 
-/* ---------- Arrastre ---------- */
+/* ---------- Arrastre + Toque para mover ---------- */
 let arrastre=null;
+let seleccionada=null;
+
+function limpiarSeleccion(){
+  if(seleccionada && seleccionada.div) seleccionada.div.classList.remove("seleccionada");
+  seleccionada=null;
+}
 function celdaBajoPunto(x,y){ const el=document.elementFromPoint(x,y); return el?el.closest(".celda"):null; }
 function limpiarFantasmas(){
   document.querySelectorAll("body > .ficha").forEach(f=>f.remove());
   document.querySelectorAll(".ficha.arrastrando").forEach(f=>f.classList.remove("arrastrando"));
 }
+
 function hacerArrastrable(div,ficha){
+  let arrastroDeVerdad=false;
+
   div.addEventListener("pointerdown",(e)=>{
     if(reproduciendo||partidaTerminada) return;
     if(div.dataset.origen==="mesa" && !esMiTurno()) return;
     e.preventDefault();
+    arrastroDeVerdad=false;
     limpiarFantasmas();
     const r=div.getBoundingClientRect(); const fant=div.cloneNode(true);
     fant.style.position="fixed"; fant.style.zIndex=1000; fant.style.pointerEvents="none";
     fant.style.width=Math.max(r.width,34)+"px"; fant.style.height=Math.max(r.height,46)+"px";
     fant.style.fontSize="20px";
     fant.style.left=r.left+"px"; fant.style.top=r.top+"px";
-    document.body.appendChild(fant); div.classList.add("arrastrando");
+    document.body.appendChild(fant);
     arrastre={ficha,div,fantasma:fant,offX:e.clientX-r.left,offY:e.clientY-r.top,
-              origen:div.dataset.origen,celdaOrigen:parseInt(div.dataset.celdaOrigen)};
+              origen:div.dataset.origen,celdaOrigen:parseInt(div.dataset.celdaOrigen),
+              xInicio:e.clientX, yInicio:e.clientY};
     div.setPointerCapture(e.pointerId);
   });
+
   div.addEventListener("pointermove",(e)=>{
     if(!arrastre) return;
-    arrastre.fantasma.style.left=(e.clientX-arrastre.offX)+"px";
-    arrastre.fantasma.style.top=(e.clientY-arrastre.offY)+"px";
-    document.querySelectorAll(".celda.resaltada").forEach(c=>c.classList.remove("resaltada"));
-    const c=celdaBajoPunto(e.clientX,e.clientY); if(c) c.classList.add("resaltada");
+    const dist = Math.hypot(e.clientX-arrastre.xInicio, e.clientY-arrastre.yInicio);
+    if(dist > 8){
+      if(!arrastroDeVerdad){ arrastroDeVerdad=true; arrastre.div.classList.add("arrastrando"); }
+      arrastre.fantasma.style.left=(e.clientX-arrastre.offX)+"px";
+      arrastre.fantasma.style.top=(e.clientY-arrastre.offY)+"px";
+      document.querySelectorAll(".celda.resaltada").forEach(c=>c.classList.remove("resaltada"));
+      const c=celdaBajoPunto(e.clientX,e.clientY); if(c) c.classList.add("resaltada");
+    }
   });
+
   const finArrastre=(e)=>{
     if(!arrastre) return;
-    const cel=celdaBajoPunto(e.clientX,e.clientY);
     limpiarFantasmas();
     document.querySelectorAll(".celda.resaltada").forEach(c=>c.classList.remove("resaltada"));
-    if(cel) soltar(cel.dataset.zona, parseInt(cel.dataset.celda));
-    arrastre=null;
+    if(arrastroDeVerdad){
+      const cel=celdaBajoPunto(e.clientX,e.clientY);
+      if(cel) soltar(cel.dataset.zona, parseInt(cel.dataset.celda));
+    } else {
+      manejarToqueFicha(ficha, div);
+    }
+    arrastre=null; arrastroDeVerdad=false;
   };
   div.addEventListener("pointerup", finArrastre);
-  div.addEventListener("pointercancel",()=>{ limpiarFantasmas(); document.querySelectorAll(".celda.resaltada").forEach(c=>c.classList.remove("resaltada")); arrastre=null; });
+  div.addEventListener("pointercancel",()=>{ limpiarFantasmas(); document.querySelectorAll(".celda.resaltada").forEach(c=>c.classList.remove("resaltada")); arrastre=null; arrastroDeVerdad=false; });
+}
+
+function manejarToqueFicha(ficha, div){
+  if(reproduciendo||partidaTerminada) return;
+  const origen = div.dataset.origen;
+  if(origen==="mesa" && !esMiTurno()) return;
+  if(seleccionada && seleccionada.ficha.id===ficha.id){ limpiarSeleccion(); return; }
+  limpiarSeleccion();
+  seleccionada = { ficha, origen, celdaOrigen: parseInt(div.dataset.celdaOrigen), div };
+  div.classList.add("seleccionada");
+}
+
+function manejarToqueCelda(zona, destino, celdaVacia){
+  if(!seleccionada) return;
+  if(!celdaVacia) return;
+  const { ficha, origen, celdaOrigen } = seleccionada;
+  if(zona==="mesa"){
+    if(!esMiTurno()){ limpiarSeleccion(); return; }
+    if(origen==="atril"){ atril[celdaOrigen]=null; mesa[destino]=ficha; movimientos.push({ficha,destino,desdeAtril:true}); }
+    else { mesa[celdaOrigen]=null; mesa[destino]=ficha; movimientos.push({ficha,destino,origenMesa:celdaOrigen}); }
+  } else {
+    if(origen!=="atril"){ mostrarValidacion(false,"Lo que ya bajaste a la mesa no puede volver al atril."); limpiarSeleccion(); return; }
+    atril[celdaOrigen]=null; atril[destino]=ficha;
+  }
+  limpiarSeleccion();
+  limpiarValidacion(); render(); guardar();
 }
 
 function soltar(zona,destino){
