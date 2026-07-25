@@ -211,13 +211,17 @@ function mostrarQR(id,txt){ const c=$(id); c.innerHTML=""; try{ new QRCode(c,{te
 function crearPC(){
   pc = new RTCPeerConnection({ iceServers:[
     {urls:"stun:stun.l.google.com:19302"},
-    {urls:"stun:stun1.l.google.com:19302"}
+    {urls:"stun:stun1.l.google.com:19302"},
+    {urls:"turn:openrelay.metered.ca:80", username:"openrelayproject", credential:"openrelayproject"},
+    {urls:"turn:openrelay.metered.ca:443", username:"openrelayproject", credential:"openrelayproject"},
+    {urls:"turn:openrelay.metered.ca:443?transport=tcp", username:"openrelayproject", credential:"openrelayproject"}
   ] });
   diag("PC creado. Recolectando candidatos ICE...");
   let listo=false; let nCand=0, nHost=0, nSrflx=0, nRelay=0;
   const terminar=()=>{ if(listo)return; listo=true;
     diag("ICE listo. candidatos="+nCand+" (host="+nHost+" srflx="+nSrflx+" relay="+nRelay+")");
     if(nSrflx===0) diag("⚠️ Sin candidatos públicos (srflx). El STUN no respondió: en redes distintas NO va a conectar.");
+    if(nRelay===0) diag("⚠️ Sin candidatos relay (TURN no respondió a tiempo).");
     const code=btoa(JSON.stringify(pc.localDescription));
     if(esAnfitrion){ $('ofertaOut').value=code; mostrarQR('qrOferta',code); }
     else { $('respuestaOut').value=code; mostrarQR('qrRespuesta',code); }
@@ -232,11 +236,11 @@ function crearPC(){
   };
   pc.oniceconnectionstatechange=()=>{
     diag("ICE estado: "+pc.iceConnectionState);
-    if(pc.iceConnectionState==="failed") diag("❌ ICE falló: los dos teléfonos no lograron un camino directo. Suele ser NAT/roaming. Necesita TURN.");
+    if(pc.iceConnectionState==="failed") diag("❌ ICE falló.");
     if(pc.iceConnectionState==="connected"||pc.iceConnectionState==="completed") diag("✅ ICE conectado.");
   };
   pc.onconnectionstatechange=()=>{ diag("Conexión: "+pc.connectionState); };
-  setTimeout(terminar,3000);
+  setTimeout(terminar,4500);
 }
 function usarCanal(dc){
   dataChannel=dc;
