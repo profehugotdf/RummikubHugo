@@ -5,8 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light only">
 <title>Rummikub</title>
-<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style>
   :root { color-scheme: light only; }
   body { font-family: sans-serif; margin:0; padding:6px; background:#1b3d1b; color:#eee; font-size:15px; }
@@ -22,6 +21,7 @@
   .oculto { display:none; }
   #log { background:#000; color:#0f0; padding:6px; font-size:11px; min-height:26px; border-radius:8px; white-space:pre-wrap; max-height:56px; overflow-y:auto; }
   #diag { background:#111; color:#7fdfff; padding:6px; font-size:11px; border-radius:8px; white-space:pre-wrap; max-height:200px; overflow-y:auto; margin:6px 0; font-family:monospace; }
+  #codigoMostrado { font-size:32px; font-weight:900; text-align:center; letter-spacing:2px; background:#fff; color:#000; padding:14px; border-radius:10px; margin:8px 0; }
   .rol { font-size:18px; padding:16px; }
   #marcador { text-align:center; font-size:14px; padding:6px; background:#154; border-radius:8px; margin:4px 0; color:#fff; }
   #reloj { text-align:center; padding:6px; border-radius:8px; margin:4px 0; color:#fff; font-weight:bold; background:#333; }
@@ -38,10 +38,7 @@
   #btnSincronizar { background:#00695c; font-size:13px; padding:7px; }
   #btnNuevaPartida { background:#0277bd; font-size:17px; padding:14px; }
   #aviso { background:#1565c0; color:#fff; padding:9px; border-radius:8px; margin:6px 0; }
-  .qrbox { background:#fff; padding:10px; border-radius:8px; display:inline-block; margin:6px 0; }
   .detalle { font-size:13px; color:#cde; }
-  details summary { cursor:pointer; padding:6px 0; }
-  #cam { width:100%; border-radius:8px; background:#000; }
   .radioLinea { color:#fff; display:block; margin:6px 0; font-size:14px; }
 
   #mesa { display:grid; grid-template-columns:repeat(21, minmax(0,1fr)); gap:1px; background:#0d3d0d; padding:2px; border-radius:6px; }
@@ -128,46 +125,19 @@
 
   <div id="flujoA" class="oculto">
     <div class="paso">
-      <div class="titulo">Paso 1 — Mostrale este QR (o enviá el texto)</div>
-      <div class="qrbox" id="qrOferta"></div>
-      <details><summary class="detalle">enviar por WhatsApp</summary>
-        <textarea id="ofertaOut" readonly></textarea>
-        <button class="btnSec" onclick="copiar('ofertaOut')">Copiar invitación</button>
-      </details>
-    </div>
-    <div class="paso">
-      <div class="titulo">Paso 2 — Recibí la respuesta</div>
-      <button onclick="abrirCamara('respuestaIn', confirmarA)">📷 Escanear respuesta</button>
-      <details><summary class="detalle">o pegar respuesta</summary>
-        <textarea id="respuestaIn" placeholder="Pegá acá la respuesta"></textarea>
-        <button class="btnSec" onclick="confirmarA()">Conectar</button>
-      </details>
+      <div class="titulo">Pasale este código a tu compañero</div>
+      <div id="codigoMostrado">...</div>
+      <button class="btnSec" onclick="copiarCodigo()">Copiar código</button>
+      <div class="detalle">Esperando que se una...</div>
     </div>
   </div>
 
   <div id="flujoB" class="oculto">
     <div class="paso">
-      <div class="titulo">Paso 1 — Recibí la invitación</div>
-      <button onclick="abrirCamara('ofertaIn', unirseB)">📷 Escanear invitación</button>
-      <details><summary class="detalle">o pegar invitación</summary>
-        <textarea id="ofertaIn" placeholder="Pegá acá la invitación"></textarea>
-        <button class="btnSec" onclick="unirseB()">Generar mi respuesta</button>
-      </details>
+      <div class="titulo">Escribí el código que te pasaron</div>
+      <input type="text" id="codigoInput" placeholder="Ej: RMK-7X4QP" style="text-transform:uppercase;">
+      <button onclick="conectarB()">Conectar</button>
     </div>
-    <div id="pasoBResp" class="paso oculto">
-      <div class="titulo">Paso 2 — Mostrale este QR (o enviá el texto)</div>
-      <div class="qrbox" id="qrRespuesta"></div>
-      <details><summary class="detalle">enviar por WhatsApp</summary>
-        <textarea id="respuestaOut" readonly></textarea>
-        <button class="btnSec" onclick="copiar('respuestaOut')">Copiar respuesta</button>
-      </details>
-    </div>
-  </div>
-
-  <div id="zonaCamara" class="oculto paso">
-    <div class="titulo">Apuntá al QR del otro teléfono</div>
-    <video id="cam" playsinline></video>
-    <button class="btnSec" onclick="cerrarCamara()">Cancelar</button>
   </div>
 
   <div id="zonaEstado" class="oculto paso">
@@ -203,9 +173,9 @@ function diag(t){ const d=$('diag'); d.textContent += "\n"+t; d.scrollTop=d.scro
 function setDiag(t){ $('diag').textContent=t; }
 
 /* ---------- Persistencia ---------- */
-const CLAVE = "rummikub_estado_v6";
+const CLAVE = "rummikub_estado_v7";
 function guardar() {
-  try { localStorage.setItem(CLAVE, JSON.stringify({ atril, fichasEnPozo, mesa, turnoInicial, numeroTurno, esAnfitrion, yaAbri, pozoReal, nombres, modoJuego, limitePuntaje, victorias, puntos, serieTerminada, ganadorSerie, contadorRival, relojTipo, relojArenaSeg, relojAjedrezMin, tiempoRestante, turnoInicioTS, hayJuego:true })); } catch(e){}
+  try { localStorage.setItem(CLAVE, JSON.stringify({ atril, fichasEnPozo, mesa, turnoInicial, numeroTurno, esAnfitrion, yaAbri, pozoReal, nombres, modoJuego, limitePuntaje, victorias, puntos, serieTerminada, ganadorSerie, contadorRival, relojTipo, relojArenaSeg, relojAjedrezMin, tiempoRestante, turnoInicioTS, miCodigo, codigoRival, hayJuego:true })); } catch(e){}
 }
 function cargarGuardado() { try { const s=localStorage.getItem(CLAVE); return s?JSON.parse(s):null; } catch(e){ return null; } }
 function borrarPartida() {
@@ -219,64 +189,70 @@ let wakeLock=null;
 async function pedirWakeLock(){ try{ if('wakeLock' in navigator){ wakeLock=await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release',()=>{wakeLock=null;}); } }catch(e){} }
 function soltarWakeLock(){ try{ if(wakeLock){wakeLock.release();wakeLock=null;} }catch(e){} }
 
-/* ---------- Conexión P2P ---------- */
-let pc, dataChannel, esAnfitrion=false;
+/* ---------- Conexión P2P vía PeerJS (código corto, reintento automático) ---------- */
+let peer=null, conn=null, esAnfitrion=false, miCodigo=null, codigoRival=null, intentandoReconectar=false;
 function log(t){ const l=$('log'); l.textContent += "\n"+t; l.scrollTop=l.scrollHeight; }
 function setLog(t){ $('log').textContent=t; }
 function mostrarAviso(t){ const a=$('aviso'); a.textContent=t; a.classList.remove('oculto'); }
-function mostrarQR(id,txt){ const c=$(id); c.innerHTML=""; try{ new QRCode(c,{text:txt,width:240,height:240,correctLevel:QRCode.CorrectLevel.L}); }catch(e){ diag("⚠️ error QR: "+e.message); } }
 
-function crearPC(){
-  pc = new RTCPeerConnection({ iceServers:[
+function generarCodigo(){
+  const alfabeto="ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  let s="RMK-";
+  for(let i=0;i<5;i++) s+=alfabeto[Math.floor(Math.random()*alfabeto.length)];
+  return s;
+}
+
+function crearPeer(idDeseado, alAbrir){
+  peer = new Peer(idDeseado || undefined, { config:{ iceServers:[
     {urls:"stun:stun.l.google.com:19302"},
     {urls:"stun:stun1.l.google.com:19302"},
     {urls:"turn:openrelay.metered.ca:80", username:"openrelayproject", credential:"openrelayproject"},
     {urls:"turn:openrelay.metered.ca:443", username:"openrelayproject", credential:"openrelayproject"},
     {urls:"turn:openrelay.metered.ca:443?transport=tcp", username:"openrelayproject", credential:"openrelayproject"},
     {urls:"turn:relay1.expressturn.com:3478", username:"efQUQ79N77B5BRVGTC", credential:"N4EAUgpjMzPLrxSy"}
-  ] });
-  diag("PC creado. Recolectando candidatos ICE...");
-  let listo=false; let nCand=0, nHost=0, nSrflx=0, nRelay=0;
-  const terminar=()=>{ if(listo)return; listo=true;
-    diag("ICE listo. candidatos="+nCand+" (host="+nHost+" srflx="+nSrflx+" relay="+nRelay+")");
-    const code=btoa(JSON.stringify(pc.localDescription));
-    if(esAnfitrion){ $('ofertaOut').value=code; mostrarQR('qrOferta',code); }
-    else { $('respuestaOut').value=code; mostrarQR('qrRespuesta',code); }
-    diag("Código generado ("+code.length+" caracteres).");
-  };
-  pc.onicecandidate=(e)=>{
-    if(e.candidate){
-      nCand++;
-      const t=e.candidate.type||"";
-      if(t==="host") nHost++; else if(t==="srflx") nSrflx++; else if(t==="relay") nRelay++;
-    } else { terminar(); }
-  };
-  pc.oniceconnectionstatechange=()=>{
-    diag("ICE estado: "+pc.iceConnectionState);
-    if(pc.iceConnectionState==="failed") diag("❌ ICE falló.");
-    if(pc.iceConnectionState==="connected"||pc.iceConnectionState==="completed") diag("✅ ICE conectado.");
-  };
-  pc.onconnectionstatechange=()=>{ diag("Conexión: "+pc.connectionState); };
-  setTimeout(terminar,8000);
+  ]}});
+  peer.on('open',(id)=>{ diag("Peer listo (id "+id+")"); if(alAbrir) alAbrir(id); });
+  peer.on('error',(err)=>{
+    diag("⚠️ "+err.type);
+    if(err.type==="unavailable-id" && esAnfitrion){ miCodigo=generarCodigo(); $('codigoMostrado').textContent=miCodigo; guardar(); crearPeer(miCodigo, alAbrir); }
+  });
+  peer.on('disconnected',()=>{ diag("Servidor de señalización desconectado, reintentando..."); try{peer.reconnect();}catch(e){} });
+  if(esAnfitrion){ peer.on('connection',(c)=>{ diag("Invitado conectándose..."); usarConexion(c); }); }
 }
-function usarCanal(dc){
-  dataChannel=dc;
-  dc.onopen=()=>{
+
+function usarConexion(c){
+  conn=c;
+  conn.on('open',()=>{
     diag("✅✅ CANAL ABIERTO — ¡conectados!");
-    ['elegirRol','flujoA','flujoB','zonaCamara'].forEach(id=>$(id).classList.add('oculto'));
-    $('diag').classList.add('oculto');
-    $('zonaEstado').classList.remove('oculto');
-    $('zonaJuego').classList.remove('oculto');
-    setLog("✅ ¡Conectado!"); pedirWakeLock();
+    ['elegirRol','flujoA','flujoB'].forEach(id=>$(id).classList.add('oculto'));
+    $('diag').classList.add('oculto'); $('aviso').classList.add('oculto');
+    $('zonaEstado').classList.remove('oculto'); $('zonaJuego').classList.remove('oculto');
+    setLog("✅ ¡Conectado!"); pedirWakeLock(); intentandoReconectar=false;
     enviar({tipo:"nombre", id:miId(), nombre:nombres[miId()]});
     if(esAnfitrion && !recuperado) repartir();
     else { render(); actualizarUI(); actualizarMarcador(); pedirEstado(); }
-  };
-  dc.onmessage=(e)=>manejarMensaje(JSON.parse(e.data));
-  dc.onclose=()=>{ log("❌ Canal cerrado."); diag("❌ Canal cerrado."); soltarWakeLock(); mostrarAviso("Se cortó la conexión. Recargá y tocá 'Reconectar'."); };
+  });
+  conn.on('data',(data)=>manejarMensaje(data));
+  conn.on('close',()=>{ diag("❌ Conexión cerrada."); soltarWakeLock(); mostrarAviso("Se cortó la conexión. Reintentando automáticamente..."); dispararReintentoAuto(); });
+  conn.on('error',(err)=>{ diag("⚠️ error datos: "+err); });
 }
-function enviar(o){ if(dataChannel && dataChannel.readyState==="open") dataChannel.send(JSON.stringify(o)); }
-function canalAbierto(){ return dataChannel && dataChannel.readyState==="open"; }
+function enviar(o){ if(conn && conn.open) conn.send(o); }
+function canalAbierto(){ return !!(conn && conn.open); }
+
+function dispararReintentoAuto(){
+  if(esAnfitrion || !codigoRival || intentandoReconectar) return;
+  intentandoReconectar=true;
+  setTimeout(()=>{
+    intentandoReconectar=false;
+    if(!canalAbierto() && peer && !peer.destroyed){
+      diag("🔄 Reintentando conexión...");
+      try{ const c=peer.connect(codigoRival,{reliable:true}); usarConexion(c); }catch(e){}
+    }
+  }, 3000);
+}
+setInterval(()=>{
+  if(turnoInicial!==null && !partidaTerminada && !esAnfitrion && codigoRival && !canalAbierto()) dispararReintentoAuto();
+}, 8000);
 
 function soyA(){
   esAnfitrion=true;
@@ -286,54 +262,39 @@ function soyA(){
   relojTipo = document.querySelector('input[name="relojRadio"]:checked').value;
   relojArenaSeg = parseInt($('arenaInput').value) || 60;
   relojAjedrezMin = parseInt($('ajedrezInput').value) || 5;
+  miCodigo = generarCodigo();
   $('elegirRol').classList.add('oculto'); $('flujoA').classList.remove('oculto');
-  setDiag("Soy ANFITRIÓN."); crearPC(); usarCanal(pc.createDataChannel("juego")); pc.createOffer().then(o=>pc.setLocalDescription(o));
+  $('codigoMostrado').textContent = miCodigo;
+  setDiag("Soy ANFITRIÓN."); guardar();
+  crearPeer(miCodigo);
 }
 function soyB(){
   nombres.B = $('miNombreInput').value.trim() || "Invitado";
   $('elegirRol').classList.add('oculto'); $('flujoB').classList.remove('oculto');
-  setDiag("Soy INVITADO. Esperando escanear/pegar la invitación.");
+  setDiag("Soy INVITADO.");
 }
-async function unirseB(){
-  const t=$('ofertaIn').value.trim(); if(!t){alert("Escaneá o pegá la invitación");return;}
-  try{
-    setDiag("Invitado: procesando invitación...");
-    crearPC(); pc.ondatachannel=(e)=>{ diag("Recibí el canal del anfitrión."); usarCanal(e.channel); };
-    await pc.setRemoteDescription(JSON.parse(atob(t)));
-    diag("Invitación aceptada. Generando respuesta...");
-    const a=await pc.createAnswer(); await pc.setLocalDescription(a);
-    $('pasoBResp').classList.remove('oculto');
-  }catch(e){ diag("❌ Error al unirse: "+e.message); }
+function conectarB(){
+  codigoRival = $('codigoInput').value.trim().toUpperCase();
+  if(!codigoRival){ alert("Escribí el código"); return; }
+  guardar();
+  crearPeer(null, ()=>{ const c=peer.connect(codigoRival,{reliable:true}); usarConexion(c); });
 }
-async function confirmarA(){
-  const t=$('respuestaIn').value.trim(); if(!t){alert("Escaneá o pegá la respuesta");return;}
-  try{
-    diag("Anfitrión: aplicando respuesta del invitado...");
-    await pc.setRemoteDescription(JSON.parse(atob(t)));
-    diag("Respuesta aplicada. Esperando que se abra el canal...");
-  }catch(e){ diag("❌ Error al conectar: "+e.message); }
-}
-function copiar(id){ const e=$(id); e.select(); navigator.clipboard.writeText(e.value).then(()=>alert("¡Copiado!"),()=>{document.execCommand('copy');alert("¡Copiado!");}); }
-function reconectar(){ const g=cargarGuardado(); if(!g){alert("No hay partida guardada");return;} if(g.esAnfitrion)soyA(); else soyB(); }
+function copiarCodigo(){ navigator.clipboard.writeText(miCodigo).then(()=>alert("¡Copiado!"),()=>alert("Código: "+miCodigo)); }
 
-/* ---------- Cámara ---------- */
-let camStream=null,camRAF=null,campoDestino=null,cbEscaneo=null;
-async function abrirCamara(campo,cb){
-  campoDestino=campo; cbEscaneo=cb; $('zonaCamara').classList.remove('oculto');
-  try{ camStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}}); const v=$('cam'); v.srcObject=camStream; await v.play(); escanearLoop(); }
-  catch(e){ alert("No pude abrir la cámara: "+e.message+"\nUsá la opción de pegar texto."); cerrarCamara(); }
-}
-function escanearLoop(){
-  const v=$('cam'); if(!camStream)return;
-  if(v.readyState===v.HAVE_ENOUGH_DATA){
-    const c=document.createElement("canvas"); c.width=v.videoWidth; c.height=v.videoHeight;
-    const x=c.getContext("2d"); x.drawImage(v,0,0,c.width,c.height);
-    const img=x.getImageData(0,0,c.width,c.height); const code=jsQR(img.data,img.width,img.height);
-    if(code&&code.data){ $(campoDestino).value=code.data; const cb=cbEscaneo; cerrarCamara(); if(cb)cb(); return; }
+function reconectarSilencioso(){
+  if(esAnfitrion){
+    $('elegirRol').classList.add('oculto'); $('flujoA').classList.remove('oculto');
+    $('codigoMostrado').textContent = miCodigo;
+    crearPeer(miCodigo);
+  } else {
+    $('elegirRol').classList.add('oculto'); $('flujoB').classList.remove('oculto');
+    crearPeer(null, ()=>{ const c=peer.connect(codigoRival,{reliable:true}); usarConexion(c); });
   }
-  camRAF=requestAnimationFrame(escanearLoop);
 }
-function cerrarCamara(){ if(camRAF)cancelAnimationFrame(camRAF); if(camStream){camStream.getTracks().forEach(t=>t.stop());camStream=null;} $('zonaCamara').classList.add('oculto'); }
+function reconectar(){
+  const g=cargarGuardado(); if(!g){alert("No hay partida guardada");return;}
+  reconectarSilencioso();
+}
 
 /* ---------- Estado ---------- */
 const COLORES=["rojo","azul","negro","naranja"];
@@ -460,7 +421,7 @@ function manejarMensaje(msg){
     actualizarMarcador(); guardar();
   }
 }
-function pedirEstado(){ if(!canalAbierto()){ mostrarAviso("No hay conexión activa. Recargá y tocá 'Reconectar'."); return; } reproduciendo=false; actualizarUI(); enviar({tipo:"pedirEstado"}); }
+function pedirEstado(){ if(!canalAbierto()){ mostrarAviso("No hay conexión activa."); dispararReintentoAuto(); return; } reproduciendo=false; actualizarUI(); enviar({tipo:"pedirEstado"}); }
 
 function iniciarTurnoSiCorresponde(){
   if(esMiTurno()){ atrilInicioTurno=JSON.parse(JSON.stringify(atril)); mesaInicioTurno=JSON.parse(JSON.stringify(mesa)); movimientos=[]; }
@@ -849,11 +810,11 @@ document.addEventListener("visibilitychange",()=>{
     pedirWakeLock();
     limpiarFantasmas();
     if(reproduciendo){ reproduciendo=false; actualizarUI(); }
+    if(!canalAbierto() && codigoRival && !esAnfitrion) dispararReintentoAuto();
     const ahora=Date.now();
     if(ahora-ultimoPedido<3000) return;
     ultimoPedido=ahora;
     if(canalAbierto()) enviar({tipo:"pedirEstado"});
-    else if(cargarGuardado()) mostrarAviso("La conexión se cortó mientras estabas afuera. Recargá y tocá 'Reconectar'.");
   }
 });
 window.addEventListener("beforeunload",(e)=>{ const g=cargarGuardado(); if(g&&g.hayJuego){ e.preventDefault(); e.returnValue=""; } });
@@ -871,9 +832,11 @@ window.addEventListener("load",()=>{
     contadorRival=g.contadorRival!=null?g.contadorRival:14;
     relojTipo=g.relojTipo||"ninguno"; relojArenaSeg=g.relojArenaSeg||60; relojAjedrezMin=g.relojAjedrezMin||5;
     tiempoRestante=g.tiempoRestante||{A:0,B:0}; turnoInicioTS=g.turnoInicioTS||Date.now();
+    miCodigo=g.miCodigo||null; codigoRival=g.codigoRival||null;
     atrilInicioTurno=JSON.parse(JSON.stringify(atril)); mesaInicioTurno=JSON.parse(JSON.stringify(mesa));
-    mostrarAviso("Se recuperó tu partida. Tocá 'Reconectar' para volver a unirte.");
+    mostrarAviso("Reconectando automáticamente...");
     $('btnReconectar').classList.remove('oculto'); $('btnBorrar').classList.remove('oculto');
+    if(miCodigo || codigoRival) reconectarSilencioso();
   }
 });
 </script>
