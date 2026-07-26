@@ -209,7 +209,8 @@ function crearPeer(idDeseado, alAbrir){
     {urls:"turn:openrelay.metered.ca:80", username:"openrelayproject", credential:"openrelayproject"},
     {urls:"turn:openrelay.metered.ca:443", username:"openrelayproject", credential:"openrelayproject"},
     {urls:"turn:openrelay.metered.ca:443?transport=tcp", username:"openrelayproject", credential:"openrelayproject"},
-    {urls:"turn:relay1.expressturn.com:3478", username:"efQUQ79N77B5BRVGTC", credential:"N4EAUgpjMzPLrxSy"}
+    {urls:"turn:relay1.expressturn.com:3478", username:"efQUQ79N77B5BRVGTC", credential:"N4EAUgpjMzPLrxSy"},
+    {urls:"turn:0.peerjs.com:3478", username:"peerjs", credential:"peerjsp"}
   ]}});
   peer.on('open',(id)=>{ diag("Peer listo (id "+id+")"); if(alAbrir) alAbrir(id); });
   peer.on('error',(err)=>{
@@ -225,6 +226,14 @@ function usarConexion(c){
   diag("DataConnection creada, esperando abrir...");
   setTimeout(()=>{
     if(conn && conn.peerConnection){
+      let nHost=0,nSrflx=0,nRelay=0;
+      conn.peerConnection.addEventListener("icecandidate",(e)=>{
+        if(e.candidate){
+          const t=e.candidate.type||"";
+          if(t==="host") nHost++; else if(t==="srflx") nSrflx++; else if(t==="relay") nRelay++;
+          diag("candidato "+t+" (host="+nHost+" srflx="+nSrflx+" relay="+nRelay+")");
+        }
+      });
       conn.peerConnection.oniceconnectionstatechange = ()=> diag("ICE: "+conn.peerConnection.iceConnectionState);
       diag("ICE actual: "+conn.peerConnection.iceConnectionState);
     } else {
