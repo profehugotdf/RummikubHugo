@@ -190,7 +190,7 @@ async function pedirWakeLock(){ try{ if('wakeLock' in navigator){ wakeLock=await
 function soltarWakeLock(){ try{ if(wakeLock){wakeLock.release();wakeLock=null;} }catch(e){} }
 
 /* ---------- Conexión P2P vía PeerJS (código corto, reintento automático) ---------- */
-let peer=null, conn=null, esAnfitrion=false, miCodigo=null, codigoRival=null, intentandoReconectar=false, intentoEnCurso=false;
+let peer=null, conn=null, esAnfitrion=false, miCodigo=null, codigoRival=null, intentandoReconectar=false, intentoEnCurso=false, conexionEnProgreso=false;
 function log(t){ const l=$('log'); l.textContent += "\n"+t; l.scrollTop=l.scrollHeight; }
 function setLog(t){ $('log').textContent=t; }
 function mostrarAviso(t){ const a=$('aviso'); a.textContent=t; a.classList.remove('oculto'); }
@@ -245,7 +245,7 @@ function usarConexion(c){
     ['elegirRol','flujoA','flujoB'].forEach(id=>$(id).classList.add('oculto'));
     $('diag').classList.add('oculto'); $('aviso').classList.add('oculto');
     $('zonaEstado').classList.remove('oculto'); $('zonaJuego').classList.remove('oculto');
-    setLog("✅ ¡Conectado!"); pedirWakeLock(); intentandoReconectar=false; intentoEnCurso=false;
+    setLog("✅ ¡Conectado!"); pedirWakeLock(); intentandoReconectar=false; intentoEnCurso=false; conexionEnProgreso=false;
     enviar({tipo:"nombre", id:miId(), nombre:nombres[miId()]});
     if(esAnfitrion){
       if(turnoInicial===null) repartir();
@@ -260,19 +260,21 @@ function enviar(o){ if(conn && conn.open) conn.send(o); }
 function canalAbierto(){ return !!(conn && conn.open); }
 
 function dispararReintentoAuto(){
-  if(esAnfitrion || !codigoRival || intentandoReconectar) return;
+  if(esAnfitrion || !codigoRival || intentandoReconectar || conexionEnProgreso) return;
   intentandoReconectar=true;
   setTimeout(()=>{
     intentandoReconectar=false;
-    if(!canalAbierto() && peer && !peer.destroyed){
+    if(!canalAbierto() && !conexionEnProgreso && peer && !peer.destroyed){
       diag("🔄 Reintentando conexión...");
-      try{ const c=peer.connect(codigoRival,{reliable:true}); usarConexion(c); }catch(e){}
+      conexionEnProgreso=true;
+      try{ const c=peer.connect(codigoRival,{reliable:true}); usarConexion(c); }catch(e){ conexionEnProgreso=false; }
+      setTimeout(()=>{ conexionEnProgreso=false; }, 15000);
     }
   }, 3000);
 }
 setInterval(()=>{
-  if(turnoInicial!==null && !partidaTerminada && !esAnfitrion && codigoRival && !canalAbierto()) dispararReintentoAuto();
-}, 8000);
+  if(turnoInicial!==null && !partidaTerminada && !esAnfitrion && codigoRival && !canalAbierto() && !conexionEnProgreso) dispararReintentoAuto();
+}, 20000);
 
 function soyA(){
   esAnfitrion=true;
@@ -298,16 +300,16 @@ function conectarB(){
   codigoRival = $('codigoInput').value.trim().toUpperCase();
   if(!codigoRival){ alert("Escribí el código"); return; }
   if(intentoEnCurso){ diag("Ya hay un intento en curso, esperá..."); return; }
-  intentoEnCurso=true;
+  intentoEnCurso=true; conexionEnProgreso=true;
   guardar();
   crearPeer(null, ()=>{
     diag("Intentando conectar a "+codigoRival+"...");
     const c=peer.connect(codigoRival,{reliable:true});
     usarConexion(c);
     setTimeout(()=>{
-      if(!canalAbierto()){ diag("⚠️ Sigue sin abrir tras 10s. Probá recargar los dos e intentar de nuevo."); }
-      intentoEnCurso=false;
-    }, 10000);
+      if(!canalAbierto()){ diag("⚠️ Sigue sin abrir tras 15s. Probá recargar los dos e intentar de nuevo."); }
+      intentoEnCurso=false; conexionEnProgreso=false;
+    }, 15000);
   });
 }
 function copiarCodigo(){ navigator.clipboard.writeText(miCodigo).then(()=>alert("¡Copiado!"),()=>alert("Código: "+miCodigo)); }
@@ -319,7 +321,10 @@ function reconectarSilencioso(){
     crearPeer(miCodigo);
   } else {
     $('elegirRol').classList.add('oculto'); $('flujoB').classList.remove('oculto');
-    crearPeer(null, ()=>{ const c=peer.connect(codigoRival,{reliable:true}); usarConexion(c); });
+    conexionEnProgreso=true;
+    crearPeer(null, ()=>{ const c=peer.connect(codigoRival,{reliable:true}); usarConexion(c);
+      setTimeout(()=>{ conexionEnProgreso=false; }, 15000);
+    });
   }
 }
 function reconectar(){
@@ -668,7 +673,7 @@ function finPartida(gane){
   soltarWakeLock(); try{ localStorage.removeItem(CLAVE); }catch(e){}
 }
 
-/* ---------- Latido + vigilante ---------- */
+/* ---------- Latido ---------- */
 setInterval(()=>{
   if(!canalAbierto() || partidaTerminada || turnoInicial===null) return;
   enviar({tipo:"ping", numeroTurno});
