@@ -247,8 +247,10 @@ function usarConexion(c){
     $('zonaEstado').classList.remove('oculto'); $('zonaJuego').classList.remove('oculto');
     setLog("✅ ¡Conectado!"); pedirWakeLock(); intentandoReconectar=false; intentoEnCurso=false;
     enviar({tipo:"nombre", id:miId(), nombre:nombres[miId()]});
-    if(esAnfitrion && !recuperado) repartir();
-    else { render(); actualizarUI(); actualizarMarcador(); pedirEstado(); }
+    if(esAnfitrion){
+      if(turnoInicial===null) repartir();
+      else { enviar({tipo:"estado",mesa,pozo:fichasEnPozo,numeroTurno,conteo:fichasAtril().length}); render(); actualizarUI(); actualizarMarcador(); }
+    } else { render(); actualizarUI(); actualizarMarcador(); pedirEstado(); }
   });
   conn.on('data',(data)=>manejarMensaje(data));
   conn.on('close',()=>{ diag("❌ Conexión cerrada."); soltarWakeLock(); mostrarAviso("Se cortó la conexión. Reintentando automáticamente..."); dispararReintentoAuto(); });
