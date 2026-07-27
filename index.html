@@ -189,11 +189,29 @@ let wakeLock=null;
 async function pedirWakeLock(){ try{ if('wakeLock' in navigator){ wakeLock=await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release',()=>{wakeLock=null;}); } }catch(e){} }
 function soltarWakeLock(){ try{ if(wakeLock){wakeLock.release();wakeLock=null;} }catch(e){} }
 
-/* ---------- Conexión P2P vía PeerJS (código corto, reintento automático) ---------- */
-let peer=null, conn=null, esAnfitrion=false, miCodigo=null, codigoRival=null, intentandoReconectar=false, intentoEnCurso=false, conexionEnProgreso=false;
+/* ══════════════════════════════════════════════════════════════
+   CONEXIÓN P2P — con los 4 fixes:
+   [FIX-1] Destrucción limpia del peer/conn anterior
+   [FIX-2] Reconexión automática para AMBOS roles
+   [FIX-3] Watchdog: detección de conexión muerta por silencio
+   [FIX-4] ICE restart ante degradación
+   ══════════════════════════════════════════════════════════════ */
+let peer=null, conn=null, esAnfitrion=false, miCodigo=null, codigoRival=null;
+let intentandoReconectar=false, conexionEnProgreso=false;
+let reintentosFallidos=0;
+const MAX_REINTENTOS = 20;
+const RECONNECT_BASE_MS = 2000;   // primer reintento a los 2s
+const RECONNECT_MAX_MS  = 30000;  // techo del backoff
+
+// [FIX-3] Watchdog
+let ultimoMensajeRecibido = 0;
+const WATCHDOG_SILENCIO_MS = 15000; // 15s sin NINGÚN mensaje → muerto
+const PING_INTERVAL_MS = 3000;
+
 function log(t){ const l=$('log'); l.textContent += "\n"+t; l.scrollTop=l.scrollHeight; }
 function setLog(t){ $('log').textContent=t; }
 function mostrarAviso(t){ const a=$('aviso'); a.textContent=t; a.classList.remove('oculto'); }
+function ocultarAviso(){ $('aviso').classList.add('oculto'); }
 
 function generarCodigo(){
   const alfabeto="ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -202,80 +220,256 @@ function generarCodigo(){
   return s;
 }
 
+/* ---------- ICE servers ----------
+   IMPORTANTE: Reemplazá los TURN públicos por uno propio.
+   Ver instrucciones al final del archivo.
+   Mientras tanto, estos son los que andan "a veces":            */
+const ICE_SERVERS = [
+  {urls:"stun:stun.l.google.com:19302"},
+  {urls:"stun:stun1.l.google.com:19302"},
+  {urls:"stun:stun2.l.google.com:19302"},
+  // PeerJS público (limitado, compartido, falla en horas pico)
+  {urls:"turn:0.peerjs.com:3478", username:"peerjs", credential:"peerjsp"},
+  // Metered.ca (puede estar caído; inofensivo si no resuelve)
+  {urls:"turn:openrelay.metered.ca:80", username:"openrelayproject", credential:"openrelayproject"},
+  {urls:"turn:openrelay.metered.ca:443", username:"openrelayproject", credential:"openrelayproject"},
+  {urls:"turn:openrelay.metered.ca:443?transport=tcp", username:"openrelayproject", credential:"openrelayproject"},
+  // ─── PONÉ ACÁ TU TURN PROPIO ───
+  // {urls:"turn:TU-SERVIDOR.com:3478", username:"rummi", credential:"claveSegura"},
+  // {urls:"turn:TU-SERVIDOR.com:3478?transport=tcp", username:"rummi", credential:"claveSegura"},
+];
+
+// [FIX-1] Destruir limpiamente antes de recrear
+function destruirPeerYConn(){
+  if(conn){
+    try{ conn.removeAllListeners(); }catch(e){}
+    try{ if(conn.open) conn.close(); }catch(e){}
+    conn = null;
+  }
+  if(peer){
+    try{ peer.removeAllListeners(); }catch(e){}
+    try{ if(!peer.destroyed) peer.destroy(); }catch(e){}
+    peer = null;
+  }
+}
+
 function crearPeer(idDeseado, alAbrir){
-  peer = new Peer(idDeseado || undefined, { config:{ iceServers:[
-    {urls:"stun:stun.l.google.com:19302"},
-    {urls:"stun:stun1.l.google.com:19302"},
-    {urls:"turn:openrelay.metered.ca:80", username:"openrelayproject", credential:"openrelayproject"},
-    {urls:"turn:openrelay.metered.ca:443", username:"openrelayproject", credential:"openrelayproject"},
-    {urls:"turn:openrelay.metered.ca:443?transport=tcp", username:"openrelayproject", credential:"openrelayproject"},
-    {urls:"turn:relay1.expressturn.com:3478", username:"efQUQ79N77B5BRVGTC", credential:"N4EAUgpjMzPLrxSy"},
-    {urls:"turn:0.peerjs.com:3478", username:"peerjs", credential:"peerjsp"}
-  ]}});
-  peer.on('open',(id)=>{ diag("Peer listo (id "+id+")"); if(alAbrir) alAbrir(id); });
+  destruirPeerYConn(); // [FIX-1]
+
+  peer = new Peer(idDeseado || undefined, {
+    config: { iceServers: ICE_SERVERS },
+    debug: 1
+  });
+
+  peer.on('open',(id)=>{
+    diag("Peer listo (id "+id+")");
+    reintentosFallidos = 0; // reset backoff
+    if(alAbrir) alAbrir(id);
+  });
+
   peer.on('error',(err)=>{
     diag("⚠️ Peer error: "+err.type+(err.message?(" — "+err.message):""));
-    if(err.type==="unavailable-id" && esAnfitrion){ miCodigo=generarCodigo(); $('codigoMostrado').textContent=miCodigo; guardar(); crearPeer(miCodigo, alAbrir); }
+    if(err.type==="unavailable-id" && esAnfitrion){
+      miCodigo=generarCodigo();
+      $('codigoMostrado').textContent=miCodigo;
+      guardar();
+      crearPeer(miCodigo, alAbrir);
+      return;
+    }
+    // Errores de red → reconexión
+    if(["network","server-error","socket-error","socket-closed","peer-unavailable"].includes(err.type)){
+      programarReconexion();
+    }
   });
-  peer.on('disconnected',()=>{ diag("Servidor de señalización desconectado, reintentando..."); try{peer.reconnect();}catch(e){} });
-  if(esAnfitrion){ peer.on('connection',(c)=>{ diag("Invitado conectándose..."); usarConexion(c); }); }
+
+  peer.on('disconnected',()=>{
+    diag("Señalización perdida. Reintentando en 2s...");
+    setTimeout(()=>{
+      if(peer && !peer.destroyed){
+        try{ peer.reconnect(); }catch(e){ diag("reconnect() falló: "+e); }
+      }
+    }, 2000);
+  });
+
+  // [FIX-2] El anfitrión SIEMPRE escucha conexiones entrantes
+  if(esAnfitrion){
+    peer.on('connection',(c)=>{
+      diag("📥 Invitado conectándose...");
+      // Si ya había una conn viva, la cierro (el invitado se reconectó)
+      if(conn && conn.open){
+        diag("Cerrando conn anterior (nueva entrante).");
+        try{ conn.close(); }catch(e){}
+      }
+      usarConexion(c);
+    });
+  }
 }
 
 function usarConexion(c){
-  conn=c;
-  diag("DataConnection creada, esperando abrir...");
-  setTimeout(()=>{
-    if(conn && conn.peerConnection){
-      let nHost=0,nSrflx=0,nRelay=0;
-      conn.peerConnection.addEventListener("icecandidate",(e)=>{
-        if(e.candidate){
-          const t=e.candidate.type||"";
-          if(t==="host") nHost++; else if(t==="srflx") nSrflx++; else if(t==="relay") nRelay++;
-          diag("candidato "+t+" (host="+nHost+" srflx="+nSrflx+" relay="+nRelay+")");
-        }
-      });
-      conn.peerConnection.oniceconnectionstatechange = ()=> diag("ICE: "+conn.peerConnection.iceConnectionState);
-      diag("ICE actual: "+conn.peerConnection.iceConnectionState);
-    } else {
-      diag("⚠️ No pude acceder al RTCPeerConnection interno todavía.");
-    }
-  }, 300);
+  // [FIX-1] limpiar listeners viejos si existía una conn
+  if(conn){
+    try{ conn.removeAllListeners(); }catch(e){}
+  }
+  conn = c;
+  ultimoMensajeRecibido = Date.now(); // [FIX-3] reset watchdog
+
   conn.on('open',()=>{
-    diag("✅✅ CANAL ABIERTO — ¡conectados!");
+    diag("✅ CANAL ABIERTO — conectados.");
+    ocultarAviso();
     ['elegirRol','flujoA','flujoB'].forEach(id=>$(id).classList.add('oculto'));
     $('diag').classList.add('oculto'); $('aviso').classList.add('oculto');
     $('zonaEstado').classList.remove('oculto'); $('zonaJuego').classList.remove('oculto');
-    setLog("✅ ¡Conectado!"); pedirWakeLock(); intentandoReconectar=false; intentoEnCurso=false; conexionEnProgreso=false;
+    setLog("✅ ¡Conectado!");
+    pedirWakeLock();
+    intentandoReconectar=false; conexionEnProgreso=false;
+    reintentosFallidos=0;
+    ultimoMensajeRecibido=Date.now();
+
     enviar({tipo:"nombre", id:miId(), nombre:nombres[miId()]});
     if(esAnfitrion){
       if(turnoInicial===null) repartir();
       else { enviar({tipo:"estado",mesa,pozo:fichasEnPozo,numeroTurno,conteo:fichasAtril().length}); render(); actualizarUI(); actualizarMarcador(); }
     } else { render(); actualizarUI(); actualizarMarcador(); pedirEstado(); }
+
+    // [FIX-4] Monitorear ICE para restart
+    monitorearICE();
   });
-  conn.on('data',(data)=>manejarMensaje(data));
-  conn.on('close',()=>{ diag("❌ Conexión cerrada."); soltarWakeLock(); mostrarAviso("Se cortó la conexión. Reintentando automáticamente..."); dispararReintentoAuto(); });
-  conn.on('error',(err)=>{ diag("⚠️ error datos: "+(err&&err.type?err.type:err)); });
+
+  conn.on('data',(data)=>{
+    ultimoMensajeRecibido = Date.now(); // [FIX-3] cualquier mensaje resetea
+    manejarMensaje(data);
+  });
+
+  conn.on('close',()=>{
+    diag("❌ Conexión cerrada.");
+    soltarWakeLock();
+    mostrarAviso("Se cortó. Reintentando...");
+    programarReconexion(); // [FIX-2] ambos roles
+  });
+
+  conn.on('error',(err)=>{
+    diag("⚠️ error conn: "+(err&&err.type?err.type:err));
+    programarReconexion();
+  });
 }
-function enviar(o){ if(conn && conn.open) conn.send(o); }
+
+// [FIX-4] ICE restart + detección de degradación
+function monitorearICE(){
+  // PeerJS expone la RTCPeerConnection interna como conn.peerConnection
+  // Puede tardar un tick en existir.
+  const chequeo = setInterval(()=>{
+    if(!conn || !conn.peerConnection){ return; }
+    clearInterval(chequeo);
+    const pc = conn.peerConnection;
+
+    pc.oniceconnectionstatechange = ()=>{
+      const st = pc.iceConnectionState;
+      diag("ICE: "+st);
+
+      if(st === "failed"){
+        diag("ICE failed → reconexión completa.");
+        try{ conn.close(); }catch(e){}
+        programarReconexion();
+      }
+      else if(st === "disconnected"){
+        // Puede recuperarse solo en ~5s. Si no, forzamos restart.
+        diag("ICE disconnected → esperando 5s...");
+        setTimeout(()=>{
+          if(pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed"){
+            diag("ICE no se recuperó → restartIce().");
+            try{ pc.restartIce(); }catch(e){
+              diag("restartIce no disponible → reconexión.");
+              try{ conn.close(); }catch(e2){}
+              programarReconexion();
+            }
+          }
+        }, 5000);
+      }
+      else if(st === "closed"){
+        programarReconexion();
+      }
+    };
+  }, 300);
+}
+
+function enviar(o){ if(conn && conn.open){ try{ conn.send(o); }catch(e){} } }
 function canalAbierto(){ return !!(conn && conn.open); }
 
-function dispararReintentoAuto(){
-  if(esAnfitrion || !codigoRival || intentandoReconectar || conexionEnProgreso) return;
-  intentandoReconectar=true;
-  setTimeout(()=>{
-    intentandoReconectar=false;
-    if(!canalAbierto() && !conexionEnProgreso && peer && !peer.destroyed){
-      diag("🔄 Reintentando conexión...");
-      conexionEnProgreso=true;
-      try{ const c=peer.connect(codigoRival,{reliable:true}); usarConexion(c); }catch(e){ conexionEnProgreso=false; }
-      setTimeout(()=>{ conexionEnProgreso=false; }, 15000);
-    }
-  }, 3000);
-}
-setInterval(()=>{
-  if(turnoInicial!==null && !partidaTerminada && !esAnfitrion && codigoRival && !canalAbierto() && !conexionEnProgreso) dispararReintentoAuto();
-}, 20000);
+// [FIX-2] Reconexión con backoff exponencial para AMBOS roles
+function programarReconexion(){
+  if(intentandoReconectar || conexionEnProgreso) return;
+  if(reintentosFallidos >= MAX_REINTENTOS){
+    mostrarAviso("Demasiados intentos ("+MAX_REINTENTOS+"). Recargá la página.");
+    return;
+  }
+  intentandoReconectar = true;
+  const delay = Math.min(RECONNECT_BASE_MS * Math.pow(1.6, reintentosFallidos), RECONNECT_MAX_MS);
+  reintentosFallidos++;
+  diag("🔄 Reintento #"+reintentosFallidos+" en "+(delay/1000).toFixed(1)+"s");
 
+  setTimeout(()=>{
+    intentandoReconectar = false;
+    if(canalAbierto()) return; // se recuperó sola
+
+    conexionEnProgreso = true;
+
+    if(esAnfitrion){
+      // Anfitrión: recrear peer con mismo código y quedar escuchando
+      diag("Anfitrión: recreando peer '"+miCodigo+"'");
+      crearPeer(miCodigo, ()=>{
+        conexionEnProgreso = false;
+        // Si ya hay partida, reenviamos estado cuando el invitado entre
+      });
+      // Timeout de seguridad
+      setTimeout(()=>{ conexionEnProgreso=false; }, 20000);
+    } else {
+      // Invitado: reconectar al código del anfitrión
+      if(!codigoRival){ conexionEnProgreso=false; return; }
+      diag("Invitado: conectando a '"+codigoRival+"'");
+      if(!peer || peer.destroyed){
+        crearPeer(null, ()=>{
+          const c = peer.connect(codigoRival, {reliable:true});
+          usarConexion(c);
+          setTimeout(()=>{ conexionEnProgreso=false; }, 15000);
+        });
+      } else {
+        const c = peer.connect(codigoRival, {reliable:true});
+        usarConexion(c);
+        setTimeout(()=>{ conexionEnProgreso=false; }, 15000);
+      }
+    }
+  }, delay);
+}
+
+// [FIX-3] Watchdog: si no llega NADA en 15s, la conexión está zombie
+setInterval(()=>{
+  if(!canalAbierto() || turnoInicial===null || partidaTerminada) return;
+  const silencio = Date.now() - ultimoMensajeRecibido;
+  if(silencio > WATCHDOG_SILENCIO_MS){
+    diag("⚠️ Watchdog: "+Math.round(silencio/1000)+"s sin mensajes. Conexión zombie → cerrando.");
+    mostrarAviso("Conexión trabada detectada. Reconectando...");
+    try{ conn.close(); }catch(e){}
+    programarReconexion();
+  }
+}, 5000);
+
+// Heartbeat (ping cada 3s)
+setInterval(()=>{
+  if(!canalAbierto() || partidaTerminada || turnoInicial===null) return;
+  enviar({tipo:"ping", numeroTurno});
+}, PING_INTERVAL_MS);
+
+// Red del sistema
+window.addEventListener("online",()=>{
+  diag("📶 Red restaurada.");
+  if(!canalAbierto() && turnoInicial!==null) programarReconexion();
+});
+window.addEventListener("offline",()=>{
+  diag("📴 Sin red.");
+  mostrarAviso("Sin internet. Esperando...");
+});
+
+/* ---------- Flujo de conexión inicial ---------- */
 function soyA(){
   esAnfitrion=true;
   recuperado=false;
@@ -288,7 +482,7 @@ function soyA(){
   miCodigo = generarCodigo();
   $('elegirRol').classList.add('oculto'); $('flujoA').classList.remove('oculto');
   $('codigoMostrado').textContent = miCodigo;
-  setDiag("Soy ANFITRIÓN."); guardar();
+  setDiag("Soy ANFITRIÓN. Código: "+miCodigo); guardar();
   crearPeer(miCodigo);
 }
 function soyB(){
@@ -299,16 +493,19 @@ function soyB(){
 function conectarB(){
   codigoRival = $('codigoInput').value.trim().toUpperCase();
   if(!codigoRival){ alert("Escribí el código"); return; }
-  if(intentoEnCurso){ diag("Ya hay un intento en curso, esperá..."); return; }
-  intentoEnCurso=true; conexionEnProgreso=true;
+  if(conexionEnProgreso){ diag("Ya hay un intento en curso..."); return; }
+  conexionEnProgreso=true;
   guardar();
   crearPeer(null, ()=>{
-    diag("Intentando conectar a "+codigoRival+"...");
+    diag("Conectando a "+codigoRival+"...");
     const c=peer.connect(codigoRival,{reliable:true});
     usarConexion(c);
     setTimeout(()=>{
-      if(!canalAbierto()){ diag("⚠️ Sigue sin abrir tras 15s. Probá recargar los dos e intentar de nuevo."); }
-      intentoEnCurso=false; conexionEnProgreso=false;
+      if(!canalAbierto()){
+        diag("⚠️ No abrió en 15s.");
+        conexionEnProgreso=false;
+        programarReconexion();
+      } else { conexionEnProgreso=false; }
     }, 15000);
   });
 }
@@ -320,9 +517,10 @@ function reconectarSilencioso(){
     $('codigoMostrado').textContent = miCodigo;
     crearPeer(miCodigo);
   } else {
-    $('elegirRol').classList.add('oculto'); $('flujoB').classList.remove('oculto');
+    $('elegirRol').classList.add('oculto');
     conexionEnProgreso=true;
-    crearPeer(null, ()=>{ const c=peer.connect(codigoRival,{reliable:true}); usarConexion(c);
+    crearPeer(null, ()=>{
+      const c=peer.connect(codigoRival,{reliable:true}); usarConexion(c);
       setTimeout(()=>{ conexionEnProgreso=false; }, 15000);
     });
   }
@@ -332,7 +530,7 @@ function reconectar(){
   reconectarSilencioso();
 }
 
-/* ---------- Estado ---------- */
+/* ---------- Estado del juego ---------- */
 const COLORES=["rojo","azul","negro","naranja"];
 const MESA_COLS=21, MESA_FILAS=8, MESA_CELDAS=MESA_COLS*MESA_FILAS;
 const ATRIL_COLS=10, ATRIL_FILAS=3, ATRIL_CELDAS=ATRIL_COLS*ATRIL_FILAS;
@@ -357,11 +555,9 @@ function miId(){ return esAnfitrion ? "A" : "B"; }
 function rivalId(){ return esAnfitrion ? "B" : "A"; }
 function turnoActual(){
   if(!turnoInicial) return null;
-  const impar = (numeroTurno % 2) === 1;
-  return impar ? turnoInicial : (turnoInicial==="A" ? "B" : "A");
+  return (numeroTurno % 2 === 1) ? turnoInicial : (turnoInicial==="A" ? "B" : "A");
 }
 function esMiTurno(){ return turnoActual() === miId(); }
-
 function fichasAtril(){ return atril.filter(x=>x); }
 function calcularPuntosAtril(){ let s=0; for(const f of fichasAtril()) s += f.comodin?30:f.num; return s; }
 function crearMazo(){
@@ -391,10 +587,10 @@ function repartir(){
 }
 
 function nuevaPartida(){
-  if(!canalAbierto()){ mostrarAviso("No hay conexión. Recargá y tocá 'Reconectar'."); return; }
+  if(!canalAbierto()){ mostrarAviso("Sin conexión. Esperá o recargá."); return; }
   if(serieTerminada){ victorias={A:0,B:0}; puntos={A:0,B:0}; serieTerminada=false; ganadorSerie=null; }
   if(esAnfitrion) repartir();
-  else { enviar({tipo:"pedirNuevaPartida"}); log("⏳ Pidiendo nueva partida al anfitrión..."); }
+  else { enviar({tipo:"pedirNuevaPartida"}); log("⏳ Pidiendo nueva partida..."); }
 }
 
 function manejarMensaje(msg){
@@ -406,10 +602,8 @@ function manejarMensaje(msg){
     modoJuego=msg.modoJuego||"conteo"; limitePuntaje=msg.limitePuntaje||100;
     relojTipo=msg.relojTipo||"ninguno"; relojArenaSeg=msg.relojArenaSeg||60; relojAjedrezMin=msg.relojAjedrezMin||5;
     tiempoRestante=msg.tiempoRestante||{A:0,B:0}; turnoInicioTS=msg.ts||Date.now();
-    contadorRival=14;
-    yaAbri=false; partidaTerminada=false; reproduciendo=false;
-    $('btnNuevaPartida').classList.add('oculto');
-    limpiarValidacion();
+    contadorRival=14; yaAbri=false; partidaTerminada=false; reproduciendo=false;
+    $('btnNuevaPartida').classList.add('oculto'); limpiarValidacion();
     ordenarAtril(true); iniciarTurnoSiCorresponde(); render(); actualizarUI(); actualizarMarcador(); guardar();
   }
   else if(msg.tipo==="pedirNuevaPartida"){ if(esAnfitrion) repartir(); }
@@ -421,8 +615,7 @@ function manejarMensaje(msg){
         const elapsed=Math.floor((Date.now()-(turnoInicioTS||Date.now()))/1000);
         tiempoRestante[rivalId()]=Math.max(0,(tiempoRestante[rivalId()]||0)-elapsed);
       }
-      numeroTurno++;
-      turnoInicioTS=Date.now();
+      numeroTurno++; turnoInicioTS=Date.now();
       enviar({tipo:"fichaRobada",ficha:f,pozo:fichasEnPozo,numeroTurno,ts:turnoInicioTS,tiempoRestante});
       iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
     }
@@ -439,9 +632,11 @@ function manejarMensaje(msg){
     enviar({tipo:"estado",mesa,pozo:fichasEnPozo,numeroTurno,conteo:fichasAtril().length});
   }
   else if(msg.tipo==="ping"){
-    if(msg.numeroTurno > numeroTurno){ enviar({tipo:"pedirEstado"}); }
-    else if(msg.numeroTurno < numeroTurno){ enviar({tipo:"estado",mesa,pozo:fichasEnPozo,numeroTurno,conteo:fichasAtril().length}); }
+    enviar({tipo:"pong", numeroTurno});
+    if(msg.numeroTurno > numeroTurno) enviar({tipo:"pedirEstado"});
+    else if(msg.numeroTurno < numeroTurno) enviar({tipo:"estado",mesa,pozo:fichasEnPozo,numeroTurno,conteo:fichasAtril().length});
   }
+  else if(msg.tipo==="pong"){ /* el watchdog ya se reseteó en conn.on('data') */ }
   else if(msg.tipo==="estado"){
     if(msg.conteo!=null){ contadorRival=msg.conteo; actualizarMarcador(); }
     if(msg.numeroTurno > numeroTurno){
@@ -453,17 +648,19 @@ function manejarMensaje(msg){
   }
   else if(msg.tipo==="resultadoMano"){
     puntos[msg.perdedorId] = (puntos[msg.perdedorId]||0) + msg.puntos;
-    comprobarFinSerie();
-    actualizarMarcador(); guardar();
+    comprobarFinSerie(); actualizarMarcador(); guardar();
   }
 }
-function pedirEstado(){ if(!canalAbierto()){ mostrarAviso("No hay conexión activa."); dispararReintentoAuto(); return; } reproduciendo=false; actualizarUI(); enviar({tipo:"pedirEstado"}); }
+function pedirEstado(){
+  if(!canalAbierto()){ mostrarAviso("Sin conexión."); programarReconexion(); return; }
+  reproduciendo=false; actualizarUI(); enviar({tipo:"pedirEstado"});
+}
 
 function iniciarTurnoSiCorresponde(){
   if(esMiTurno()){ atrilInicioTurno=JSON.parse(JSON.stringify(atril)); mesaInicioTurno=JSON.parse(JSON.stringify(mesa)); movimientos=[]; }
 }
 
-/* ---------- Marcador de la serie ---------- */
+/* ---------- Marcador ---------- */
 function comprobarFinSerie(){
   if(modoJuego!=="puntaje") return;
   if((puntos.A||0) >= limitePuntaje){ serieTerminada=true; ganadorSerie="B"; }
@@ -487,16 +684,14 @@ function actualizarReloj(){
   const elapsed = Math.floor((Date.now()-turnoInicioTS)/1000);
   if(relojTipo==="arena"){
     const restante = relojArenaSeg - elapsed;
-    if(restante<=0){ d.textContent="⏰ ¡Se acabó el tiempo del turno de "+nombres[turnoActual()]+"!"; d.style.background="#a11"; }
-    else { d.textContent="⏳ "+restante+"s de turno"; d.style.background = restante<=10?"#a11":"#333"; }
+    if(restante<=0){ d.textContent="⏰ ¡Tiempo de "+nombres[turnoActual()]+"!"; d.style.background="#a11"; }
+    else { d.textContent="⏳ "+restante+"s"; d.style.background = restante<=10?"#a11":"#333"; }
   } else if(relojTipo==="ajedrez"){
     const idT = turnoActual();
-    const base = (tiempoRestante[idT]||0);
-    const restante = Math.max(0, base - elapsed);
+    const restante = Math.max(0, (tiempoRestante[idT]||0) - elapsed);
     const mm=Math.floor(restante/60), ss=restante%60;
     d.textContent = "⏳ "+nombres[idT]+": "+mm+":"+(ss<10?"0":"")+ss;
     d.style.background = restante<=30?"#a11":"#333";
-    if(restante<=0) d.textContent += " — ¡tiempo agotado!";
   }
 }
 setInterval(actualizarReloj, 1000);
@@ -542,27 +737,23 @@ function validarJugada(){
   const bloques = obtenerBloques(mesa);
   const idsNuevos = new Set();
   for(const m of movimientos){ if(m.desdeAtril && m.ficha) idsNuevos.add(m.ficha.id); }
-
   if(!yaAbri){
     if(movimientos.some(m=>m.origenMesa!=null && !idsNuevos.has(m.ficha.id)))
-      return {ok:false,motivo:"En la apertura solo podés bajar fichas de tu atril, sin tocar la mesa."};
+      return {ok:false,motivo:"En la apertura solo podés bajar fichas de tu atril."};
     const bloquesTocados = bloques.filter(b => b.some(x => idsNuevos.has(x.ficha.id)));
-    if(bloquesTocados.length===0)
-      return {ok:false,motivo:"No bajaste ninguna ficha a la mesa."};
+    if(bloquesTocados.length===0) return {ok:false,motivo:"No bajaste ninguna ficha."};
     let suma=0;
     for(const b of bloquesTocados){
       if(b.some(x=>!idsNuevos.has(x.ficha.id)))
-        return {ok:false,motivo:"Una jugada quedó pegada a otra. Separala con una celda vacía o usá otra fila.",celdas:b.map(x=>x.idx)};
-      if(!bloqueValido(b))
-        return {ok:false,motivo:"Hay un grupo/escalera inválido en tu apertura.",celdas:b.map(x=>x.idx)};
+        return {ok:false,motivo:"Quedó pegada a otra. Separala.",celdas:b.map(x=>x.idx)};
+      if(!bloqueValido(b)) return {ok:false,motivo:"Grupo/escalera inválido.",celdas:b.map(x=>x.idx)};
       for(const x of b){ if(!x.ficha.comodin) suma+=x.ficha.num; }
     }
-    if(suma<30) return {ok:false,motivo:"Tu apertura debe sumar al menos 30 (suma "+suma+")."};
+    if(suma<30) return {ok:false,motivo:"Apertura mínimo 30 (vas "+suma+")."};
     return {ok:true};
   }
-
   for(const b of bloques){
-    if(!bloqueValido(b)) return {ok:false,motivo:"Un grupo/escalera de la mesa quedó inválido. Acomodalo antes de enviar.",celdas:b.map(x=>x.idx)};
+    if(!bloqueValido(b)) return {ok:false,motivo:"Bloque inválido en mesa.",celdas:b.map(x=>x.idx)};
   }
   return {ok:true};
 }
@@ -575,7 +766,7 @@ function deshacer(){
 }
 function enviarJugada(){
   if(!esMiTurno()||partidaTerminada) return;
-  if(movimientos.length===0){ mostrarValidacion(false,"No hiciste ninguna jugada. Usá 'Robar del pozo y pasar'."); return; }
+  if(movimientos.length===0){ mostrarValidacion(false,"Sin jugada. Usá 'Robar del pozo y pasar'."); return; }
   const v=validarJugada();
   if(!v.ok){ mostrarValidacion(false,v.motivo); resaltarInvalidas(v.celdas||[]); return; }
   if(!yaAbri) yaAbri=true;
@@ -585,8 +776,7 @@ function enviarJugada(){
     const elapsed=Math.floor((Date.now()-(turnoInicioTS||Date.now()))/1000);
     tiempoRestante[miId()]=Math.max(0,(tiempoRestante[miId()]||0)-elapsed);
   }
-  numeroTurno++;
-  turnoInicioTS=Date.now();
+  numeroTurno++; turnoInicioTS=Date.now();
   enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos,gano,numeroTurno,conteo:fichasAtril().length,ts:turnoInicioTS,tiempoRestante});
   if(gano){ victorias[miId()]++; actualizarMarcador(); }
   actualizarUI(); guardar();
@@ -604,8 +794,7 @@ function robar(){
       const elapsed=Math.floor((Date.now()-(turnoInicioTS||Date.now()))/1000);
       tiempoRestante[miId()]=Math.max(0,(tiempoRestante[miId()]||0)-elapsed);
     }
-    numeroTurno++;
-    turnoInicioTS=Date.now();
+    numeroTurno++; turnoInicioTS=Date.now();
     enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos:[],robo:true,numeroTurno,conteo:fichasAtril().length,ts:turnoInicioTS,tiempoRestante});
     iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
   } else { enviar({tipo:"pedirFicha"}); log("⏳ Pidiendo ficha..."); }
@@ -647,11 +836,9 @@ async function reproducirJugada(msg){
         enviar({tipo:"resultadoMano", perdedorId:miId(), puntos:p});
         comprobarFinSerie();
       }
-      actualizarMarcador(); guardar();
-      render(); actualizarUI(); finPartida(false); return;
+      actualizarMarcador(); guardar(); render(); actualizarUI(); finPartida(false); return;
     }
-    actualizarMarcador();
-    iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
+    actualizarMarcador(); iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
   }
 }
 function esperar(ms){ return new Promise(r=>setTimeout(r,ms)); }
@@ -659,13 +846,8 @@ function esperar(ms){ return new Promise(r=>setTimeout(r,ms)); }
 function finPartida(gane){
   partidaTerminada=true;
   const e=$('estadoTurno');
-  if(serieTerminada){
-    e.textContent = "🏁 Fin de la serie: gana "+nombres[ganadorSerie]+"!";
-    e.className = "miTurno";
-  } else {
-    e.textContent = gane ? "🏆 ¡Ganó "+nombres[miId()]+"!" : "😔 Ganó "+nombres[rivalId()];
-    e.className = gane?"miTurno":"turnoRival";
-  }
+  if(serieTerminada){ e.textContent="🏁 Fin de la serie: gana "+nombres[ganadorSerie]+"!"; e.className="miTurno"; }
+  else { e.textContent = gane ? "🏆 ¡Ganó "+nombres[miId()]+"!" : "😔 Ganó "+nombres[rivalId()]; e.className = gane?"miTurno":"turnoRival"; }
   $('btnNuevaPartida').textContent = serieTerminada ? "🏆 Nueva serie" : "🔄 Nueva partida";
   ['btnDeshacer','btnEnviar','btnRobar'].forEach(id=>$(id).disabled=true);
   $('btnNuevaPartida').classList.remove('oculto');
@@ -673,15 +855,11 @@ function finPartida(gane){
   soltarWakeLock(); try{ localStorage.removeItem(CLAVE); }catch(e){}
 }
 
-/* ---------- Latido ---------- */
-setInterval(()=>{
-  if(!canalAbierto() || partidaTerminada || turnoInicial===null) return;
-  enviar({tipo:"ping", numeroTurno});
-}, 4000);
+/* ---------- Destrabe reproducción ---------- */
 setInterval(()=>{
   if(reproduciendo && Date.now()-inicioReproduccion>15000){
     reproduciendo=false; actualizarUI();
-    log("⚠️ Destrabado automático, sincronizando...");
+    log("⚠️ Destrabado, sincronizando...");
     if(canalAbierto()) enviar({tipo:"pedirEstado"});
   }
 }, 5000);
@@ -692,7 +870,7 @@ function actualizarUI(){
   if(partidaTerminada) return;
   const idEnTurno = turnoActual();
   const nombreEnTurno = idEnTurno ? (nombres[idEnTurno]||"...") : "...";
-  if(reproduciendo){ e.textContent="👀 Mirando la jugada de "+nombreEnTurno+"..."; e.className="turnoRival"; }
+  if(reproduciendo){ e.textContent="👀 Mirando jugada de "+nombreEnTurno+"..."; e.className="turnoRival"; }
   else if(esMiTurno()){ e.textContent="🟢 Tu turno, "+nombreEnTurno; e.className="miTurno"; }
   else { e.textContent="⏳ Turno de "+nombreEnTurno; e.className="turnoRival"; }
   $('abierto').textContent = yaAbri?"· ✅ abierto":"· 🔒 falta abrir (30)";
@@ -735,45 +913,31 @@ function renderAtril(){
   $('pozo').textContent=fichasEnPozo;
 }
 
-/* ---------- Arrastre + Toque para mover ---------- */
-let arrastre=null;
-let seleccionada=null;
-
-function limpiarSeleccion(){
-  if(seleccionada && seleccionada.div) seleccionada.div.classList.remove("seleccionada");
-  seleccionada=null;
-}
+/* ---------- Arrastre + Toque ---------- */
+let arrastre=null, seleccionada=null;
+function limpiarSeleccion(){ if(seleccionada && seleccionada.div) seleccionada.div.classList.remove("seleccionada"); seleccionada=null; }
 function celdaBajoPunto(x,y){ const el=document.elementFromPoint(x,y); return el?el.closest(".celda"):null; }
-function limpiarFantasmas(){
-  document.querySelectorAll("body > .ficha").forEach(f=>f.remove());
-  document.querySelectorAll(".ficha.arrastrando").forEach(f=>f.classList.remove("arrastrando"));
-}
+function limpiarFantasmas(){ document.querySelectorAll("body > .ficha").forEach(f=>f.remove()); document.querySelectorAll(".ficha.arrastrando").forEach(f=>f.classList.remove("arrastrando")); }
 
 function hacerArrastrable(div,ficha){
   let arrastroDeVerdad=false;
-
   div.addEventListener("pointerdown",(e)=>{
     if(reproduciendo||partidaTerminada) return;
     if(div.dataset.origen==="mesa" && !esMiTurno()) return;
-    e.preventDefault();
-    arrastroDeVerdad=false;
-    limpiarFantasmas();
+    e.preventDefault(); arrastroDeVerdad=false; limpiarFantasmas();
     const r=div.getBoundingClientRect(); const fant=div.cloneNode(true);
     fant.style.position="fixed"; fant.style.zIndex=1000; fant.style.pointerEvents="none";
     fant.style.width=Math.max(r.width,34)+"px"; fant.style.height=Math.max(r.height,46)+"px";
-    fant.style.fontSize="20px";
-    fant.style.left=r.left+"px"; fant.style.top=r.top+"px";
+    fant.style.fontSize="20px"; fant.style.left=r.left+"px"; fant.style.top=r.top+"px";
     document.body.appendChild(fant);
     arrastre={ficha,div,fantasma:fant,offX:e.clientX-r.left,offY:e.clientY-r.top,
               origen:div.dataset.origen,celdaOrigen:parseInt(div.dataset.celdaOrigen),
               xInicio:e.clientX, yInicio:e.clientY};
     div.setPointerCapture(e.pointerId);
   });
-
   div.addEventListener("pointermove",(e)=>{
     if(!arrastre) return;
-    const dist = Math.hypot(e.clientX-arrastre.xInicio, e.clientY-arrastre.yInicio);
-    if(dist > 8){
+    if(Math.hypot(e.clientX-arrastre.xInicio, e.clientY-arrastre.yInicio) > 8){
       if(!arrastroDeVerdad){ arrastroDeVerdad=true; arrastre.div.classList.add("arrastrando"); }
       arrastre.fantasma.style.left=(e.clientX-arrastre.offX)+"px";
       arrastre.fantasma.style.top=(e.clientY-arrastre.offY)+"px";
@@ -781,23 +945,16 @@ function hacerArrastrable(div,ficha){
       const c=celdaBajoPunto(e.clientX,e.clientY); if(c) c.classList.add("resaltada");
     }
   });
-
   const finArrastre=(e)=>{
     if(!arrastre) return;
-    limpiarFantasmas();
-    document.querySelectorAll(".celda.resaltada").forEach(c=>c.classList.remove("resaltada"));
-    if(arrastroDeVerdad){
-      const cel=celdaBajoPunto(e.clientX,e.clientY);
-      if(cel) soltar(cel.dataset.zona, parseInt(cel.dataset.celda));
-    } else {
-      manejarToqueFicha(ficha, div);
-    }
+    limpiarFantasmas(); document.querySelectorAll(".celda.resaltada").forEach(c=>c.classList.remove("resaltada"));
+    if(arrastroDeVerdad){ const cel=celdaBajoPunto(e.clientX,e.clientY); if(cel) soltar(cel.dataset.zona, parseInt(cel.dataset.celda)); }
+    else { manejarToqueFicha(ficha, div); }
     arrastre=null; arrastroDeVerdad=false;
   };
   div.addEventListener("pointerup", finArrastre);
   div.addEventListener("pointercancel",()=>{ limpiarFantasmas(); document.querySelectorAll(".celda.resaltada").forEach(c=>c.classList.remove("resaltada")); arrastre=null; arrastroDeVerdad=false; });
 }
-
 function manejarToqueFicha(ficha, div){
   if(reproduciendo||partidaTerminada) return;
   const origen = div.dataset.origen;
@@ -807,49 +964,38 @@ function manejarToqueFicha(ficha, div){
   seleccionada = { ficha, origen, celdaOrigen: parseInt(div.dataset.celdaOrigen), div };
   div.classList.add("seleccionada");
 }
-
 function manejarToqueCelda(zona, destino, celdaVacia){
-  if(!seleccionada) return;
-  if(!celdaVacia) return;
+  if(!seleccionada) return; if(!celdaVacia) return;
   const { ficha, origen, celdaOrigen } = seleccionada;
   if(zona==="mesa"){
     if(!esMiTurno()){ limpiarSeleccion(); return; }
     if(origen==="atril"){ atril[celdaOrigen]=null; mesa[destino]=ficha; movimientos.push({ficha,destino,desdeAtril:true}); }
     else { mesa[celdaOrigen]=null; mesa[destino]=ficha; movimientos.push({ficha,destino,origenMesa:celdaOrigen}); }
   } else {
-    if(origen!=="atril"){ mostrarValidacion(false,"Lo que ya bajaste a la mesa no puede volver al atril."); limpiarSeleccion(); return; }
+    if(origen!=="atril"){ mostrarValidacion(false,"No puede volver al atril."); limpiarSeleccion(); return; }
     atril[celdaOrigen]=null; atril[destino]=ficha;
   }
-  limpiarSeleccion();
-  limpiarValidacion(); render(); guardar();
+  limpiarSeleccion(); limpiarValidacion(); render(); guardar();
 }
-
 function soltar(zona,destino){
   const f=arrastre.ficha, orig=arrastre.celdaOrigen, desde=arrastre.origen;
   if(zona==="mesa"){
-    if(!esMiTurno()) return;
-    if(mesa[destino]) return;
+    if(!esMiTurno()) return; if(mesa[destino]) return;
     if(desde==="atril"){ atril[orig]=null; mesa[destino]=f; movimientos.push({ficha:f,destino,desdeAtril:true}); }
     else { if(orig===destino) return; mesa[orig]=null; mesa[destino]=f; movimientos.push({ficha:f,destino,origenMesa:orig}); }
   } else {
-    if(desde!=="atril"){ mostrarValidacion(false,"Lo que ya bajaste a la mesa no puede volver al atril."); return; }
-    if(atril[destino]) return;
-    atril[orig]=null; atril[destino]=f;
+    if(desde!=="atril"){ mostrarValidacion(false,"No puede volver al atril."); return; }
+    if(atril[destino]) return; atril[orig]=null; atril[destino]=f;
   }
   limpiarValidacion(); render(); guardar();
 }
 
-/* ---------- Volver de segundo plano ---------- */
-let ultimoPedido=0;
+/* ---------- Visibility / lifecycle ---------- */
 document.addEventListener("visibilitychange",()=>{
   if(document.visibilityState==="visible"){
-    pedirWakeLock();
-    limpiarFantasmas();
+    pedirWakeLock(); limpiarFantasmas();
     if(reproduciendo){ reproduciendo=false; actualizarUI(); }
-    if(!canalAbierto() && codigoRival && !esAnfitrion) dispararReintentoAuto();
-    const ahora=Date.now();
-    if(ahora-ultimoPedido<3000) return;
-    ultimoPedido=ahora;
+    if(!canalAbierto() && turnoInicial!==null) programarReconexion();
     if(canalAbierto()) enviar({tipo:"pedirEstado"});
   }
 });
