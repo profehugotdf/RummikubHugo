@@ -41,6 +41,7 @@
   #chatMensajes div { margin:3px 0; padding:5px 8px; border-radius:8px; word-wrap:break-word; }
   .chatMsgYo { background:#1565c0; margin-left:20%; }
   .chatMsgRival { background:#2a5a2a; margin-right:20%; }
+  @keyframes parpadeoLlamada { from{opacity:1;} to{opacity:.55;} }
   #btnNuevaPartida { background:#0277bd; font-size:17px; padding:14px; }
   #aviso { background:#1565c0; color:#fff; padding:9px; border-radius:8px; margin:6px 0; }
   .detalle { font-size:13px; color:#cde; }
@@ -212,6 +213,7 @@
       </div>
       <div id="chatCuerpo" class="oculto">
         <div id="chatMensajes"></div>
+        <button style="background:#c0392b;" onclick="llamarAtencion()">🔔 Avisarle (se distrajo)</button>
         <div style="display:flex; gap:6px;">
           <input type="text" id="chatInput" placeholder="Escribí un mensaje..." style="flex:1; margin:0;" onkeydown="if(event.key==='Enter'){enviarChat();}">
           <button style="width:auto; padding:11px 16px; margin:0;" onclick="enviarChat()">Enviar</button>
@@ -268,6 +270,84 @@ function log(t){ const l=$('log'); l.textContent += "\n"+t; l.scrollTop=l.scroll
 function setLog(t){ $('log').textContent=t; }
 function mostrarAviso(t){ const a=$('aviso'); a.textContent=t; a.classList.remove('oculto'); }
 function ocultarAviso(){ $('aviso').classList.add('oculto'); }
+
+/* ══════════════════════════════════════════════════════════════
+   [FIX-7] Sonido, vibración y festejo — todo sintetizado (sin
+   archivos externos), funciona también en el modo sin Internet.
+   ══════════════════════════════════════════════════════════════ */
+let audioCtx = null;
+function obtenerAudioCtx(){
+  if(!audioCtx){ try{ audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return null; } }
+  if(audioCtx.state === "suspended"){ audioCtx.resume().catch(()=>{}); }
+  return audioCtx;
+}
+document.addEventListener("pointerdown", ()=>{ obtenerAudioCtx(); }, {once:true});
+
+function tono(frecuencia, duracionMs, tipoOnda, volumen){
+  const ctx = obtenerAudioCtx(); if(!ctx) return;
+  const osc = ctx.createOscillator(); const gain = ctx.createGain();
+  osc.type = tipoOnda || "sine"; osc.frequency.value = frecuencia;
+  gain.gain.value = volumen!=null ? volumen : 0.15;
+  osc.connect(gain); gain.connect(ctx.destination);
+  osc.start();
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duracionMs/1000);
+  osc.stop(ctx.currentTime + duracionMs/1000);
+}
+function vibrar(patron){ try{ if(navigator.vibrate) navigator.vibrate(patron); }catch(e){} }
+function sonidoTurno(){ tono(880, 180, "sine", 0.18); }
+function sonidoVictoria(){
+  [523.25, 659.25, 783.99, 1046.5].forEach((f,i)=>{ setTimeout(()=>tono(f, 220, "triangle", 0.2), i*140); });
+}
+function sonidoLlamada(){
+  for(let i=0;i<3;i++) setTimeout(()=>tono(1200, 150, "square", 0.2), i*220);
+}
+
+function mostrarFuegosArtificiales(){
+  const canvas = document.createElement("canvas");
+  canvas.style.cssText = "position:fixed; top:0; left:0; width:100%; height:100%; z-index:9999; pointer-events:none;";
+  canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+  document.body.appendChild(canvas);
+  const ctx = canvas.getContext("2d");
+  const colores = ["#ff5252","#ffd740","#69f0ae","#40c4ff","#e040fb","#ffffff"];
+  let particulas = [];
+  function explotar(x,y){
+    for(let i=0;i<40;i++){
+      const ang=(Math.PI*2*i)/40, vel=2+Math.random()*3;
+      particulas.push({x,y, vx:Math.cos(ang)*vel, vy:Math.sin(ang)*vel, vida:60+Math.random()*20, color:colores[Math.floor(Math.random()*colores.length)]});
+    }
+  }
+  explotar(canvas.width*0.5, canvas.height*0.3);
+  let explosiones=0;
+  const intervalo = setInterval(()=>{
+    explotar(canvas.width*(0.2+Math.random()*0.6), canvas.height*(0.15+Math.random()*0.4));
+    explosiones++; if(explosiones>=5) clearInterval(intervalo);
+  }, 450);
+  let cuadro=0;
+  (function animar(){
+    cuadro++;
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    particulas.forEach(p=>{
+      p.x+=p.vx; p.y+=p.vy; p.vy+=0.05; p.vida--;
+      ctx.globalAlpha = Math.max(p.vida/80, 0);
+      ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(p.x,p.y,2.5,0,Math.PI*2); ctx.fill();
+    });
+    particulas = particulas.filter(p=>p.vida>0);
+    if(cuadro<260) requestAnimationFrame(animar); else canvas.remove();
+  })();
+}
+
+function mostrarLlamadaBanner(){
+  const el = document.createElement("div");
+  el.textContent = "🔔 "+nombres[rivalId()]+" te está avisando — ¡es tu turno!";
+  el.style.cssText = "position:fixed; top:0; left:0; right:0; background:#c0392b; color:#fff; text-align:center; padding:14px; font-weight:bold; font-size:16px; z-index:9998; animation: parpadeoLlamada .5s infinite alternate;";
+  document.body.appendChild(el);
+  setTimeout(()=>el.remove(), 4000);
+}
+function llamarAtencion(){
+  if(!canalAbierto()){ mostrarAviso("Sin conexión, no se pudo avisar."); return; }
+  enviar({tipo:"llamar"});
+}
 
 function generarCodigo(){
   const alfabeto="ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -851,6 +931,9 @@ function manejarMensaje(msg){
     agregarMensajeChat("rival", msg.texto);
     if($('chatCuerpo').classList.contains('oculto')){ chatSinLeer++; actualizarBadgeChat(); }
   }
+  else if(msg.tipo==="llamar"){
+    sonidoLlamada(); vibrar([250,120,250,120,250]); mostrarLlamadaBanner();
+  }
 }
 /* ---------- Chat ---------- */
 function toggleChat(){
@@ -1089,6 +1172,7 @@ function finPartida(gane){
   ['btnDeshacer','btnEnviar','btnRobar'].forEach(id=>$(id).disabled=true);
   $('btnNuevaPartida').classList.remove('oculto');
   $('reloj').classList.add('oculto');
+  if(gane){ mostrarFuegosArtificiales(); sonidoVictoria(); vibrar([100,60,100,60,200]); }
   soltarWakeLock(); try{ localStorage.removeItem(CLAVE); }catch(e){}
 }
 
@@ -1102,13 +1186,17 @@ setInterval(()=>{
 }, 5000);
 
 /* ---------- UI ---------- */
+let ultimoTurnoAvisado = null;
 function actualizarUI(){
   const e=$('estadoTurno');
   if(partidaTerminada) return;
   const idEnTurno = turnoActual();
   const nombreEnTurno = idEnTurno ? (nombres[idEnTurno]||"...") : "...";
   if(reproduciendo){ e.textContent="👀 Mirando jugada de "+nombreEnTurno+"..."; e.className="turnoRival"; }
-  else if(esMiTurno()){ e.textContent="🟢 Tu turno, "+nombreEnTurno; e.className="miTurno"; }
+  else if(esMiTurno()){
+    e.textContent="🟢 Tu turno, "+nombreEnTurno; e.className="miTurno";
+    if(ultimoTurnoAvisado !== numeroTurno){ ultimoTurnoAvisado = numeroTurno; sonidoTurno(); vibrar(150); }
+  }
   else { e.textContent="⏳ Turno de "+nombreEnTurno; e.className="turnoRival"; }
   $('abierto').textContent = yaAbri?"· ✅ abierto":"· 🔒 falta abrir (30)";
   const bloq=!esMiTurno()||reproduciendo;
