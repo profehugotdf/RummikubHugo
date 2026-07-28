@@ -88,7 +88,6 @@
     #zonaJuego > .paso:nth-of-type(2) { grid-column: 2; margin:0; padding:4px; }
     #mesa { height:66vh; grid-auto-rows:minmax(0,1fr); max-width:calc(66vh / 8 * 0.75 * 21); margin:0 auto; }
     #mesa .celda { aspect-ratio:auto; height:100%; }
-    #mesa .ficha { font-size:clamp(8px, 3vh, 20px); }
     #atril { gap:4px; padding:4px; }
     #atril .ficha { font-size:clamp(13px, 1.6vw, 24px); }
     #zonaJuego .titulo { font-size:12px; margin-bottom:2px; }
@@ -105,22 +104,28 @@
   <div id="diag">diagnóstico: esperando...</div>
 
   <div id="elegirRol" class="paso">
-    <div class="titulo">Tu nombre</div>
-    <input type="text" id="miNombreInput" placeholder="Ej: Hugo">
-    <div class="titulo" style="margin-top:10px;">Si sos anfitrión, elegí el modo de la serie</div>
-    <label class="radioLinea"><input type="radio" name="modoRadio" value="conteo" checked> Solo contar partidas ganadas</label>
-    <label class="radioLinea"><input type="radio" name="modoRadio" value="puntaje"> Puntaje acumulado (pierde el que llega a X)</label>
-    <input type="number" id="limiteInput" placeholder="Puntaje límite (ej 100)" value="100">
-    <div class="titulo" style="margin-top:10px;">Reloj (opcional)</div>
-    <label class="radioLinea"><input type="radio" name="relojRadio" value="ninguno" checked> Sin reloj</label>
-    <label class="radioLinea"><input type="radio" name="relojRadio" value="arena"> Arena: segundos por turno</label>
-    <input type="number" id="arenaInput" placeholder="Segundos por turno (ej 60)" value="60">
-    <label class="radioLinea"><input type="radio" name="relojRadio" value="ajedrez"> Ajedrez: minutos totales por jugador</label>
-    <input type="number" id="ajedrezInput" placeholder="Minutos totales (ej 5)" value="5">
-    <button class="rol" onclick="soyA()">Soy el ANFITRIÓN (reparto yo)</button>
-    <button class="rol" onclick="soyB()">Me UNO a la partida</button>
-    <button id="btnReconectar" class="oculto btnSec" onclick="reconectar()">Reconectar (recuperé una partida)</button>
-    <button id="btnBorrar" class="oculto" style="background:#c0392b" onclick="borrarPartida()">Borrar partida y empezar de cero</button>
+    <div id="avisoRecuperada" class="oculto">
+      <div class="titulo">Tenés una partida guardada sin terminar</div>
+      <div class="detalle" style="margin-bottom:8px;">¿Querés seguirla o arrancar una nueva?</div>
+      <button class="btnSec" onclick="reconectar()">Reconectar (seguir la partida guardada)</button>
+      <button style="background:#c0392b" onclick="borrarPartida()">Empezar de cero (borra la partida guardada)</button>
+    </div>
+    <div id="formNuevo">
+      <div class="titulo">Tu nombre</div>
+      <input type="text" id="miNombreInput" placeholder="Ej: Hugo">
+      <div class="titulo" style="margin-top:10px;">Si sos anfitrión, elegí el modo de la serie</div>
+      <label class="radioLinea"><input type="radio" name="modoRadio" value="conteo" checked> Solo contar partidas ganadas</label>
+      <label class="radioLinea"><input type="radio" name="modoRadio" value="puntaje"> Puntaje acumulado (pierde el que llega a X)</label>
+      <input type="number" id="limiteInput" placeholder="Puntaje límite (ej 100)" value="100">
+      <div class="titulo" style="margin-top:10px;">Reloj (opcional)</div>
+      <label class="radioLinea"><input type="radio" name="relojRadio" value="ninguno" checked> Sin reloj</label>
+      <label class="radioLinea"><input type="radio" name="relojRadio" value="arena"> Arena: segundos por turno</label>
+      <input type="number" id="arenaInput" placeholder="Segundos por turno (ej 60)" value="60">
+      <label class="radioLinea"><input type="radio" name="relojRadio" value="ajedrez"> Ajedrez: minutos totales por jugador</label>
+      <input type="number" id="ajedrezInput" placeholder="Minutos totales (ej 5)" value="5">
+      <button class="rol" onclick="soyA()">Soy el ANFITRIÓN (reparto yo)</button>
+      <button class="rol" onclick="soyB()">Me UNO a la partida</button>
+    </div>
   </div>
 
   <div id="flujoA" class="oculto">
@@ -173,7 +178,7 @@ function diag(t){ const d=$('diag'); d.textContent += "\n"+t; d.scrollTop=d.scro
 function setDiag(t){ $('diag').textContent=t; }
 
 /* ---------- Persistencia ---------- */
-const CLAVE = "rummikub_estado_v7";
+const CLAVE = "rummikub_estado_v8";
 function guardar() {
   try { localStorage.setItem(CLAVE, JSON.stringify({ atril, fichasEnPozo, mesa, turnoInicial, numeroTurno, esAnfitrion, yaAbri, pozoReal, nombres, modoJuego, limitePuntaje, victorias, puntos, serieTerminada, ganadorSerie, contadorRival, relojTipo, relojArenaSeg, relojAjedrezMin, tiempoRestante, turnoInicioTS, miCodigo, codigoRival, hayJuego:true })); } catch(e){}
 }
@@ -190,11 +195,12 @@ async function pedirWakeLock(){ try{ if('wakeLock' in navigator){ wakeLock=await
 function soltarWakeLock(){ try{ if(wakeLock){wakeLock.release();wakeLock=null;} }catch(e){} }
 
 /* ══════════════════════════════════════════════════════════════
-   CONEXIÓN P2P — con los 4 fixes:
+   CONEXIÓN P2P — con los fixes:
    [FIX-1] Destrucción limpia del peer/conn anterior
    [FIX-2] Reconexión automática para AMBOS roles
    [FIX-3] Watchdog: detección de conexión muerta por silencio
    [FIX-4] ICE restart ante degradación
+   [FIX-5] TURN de Cloudflare dinámico (con respaldo público)
    ══════════════════════════════════════════════════════════════ */
 let peer=null, conn=null, esAnfitrion=false, miCodigo=null, codigoRival=null;
 let intentandoReconectar=false, conexionEnProgreso=false;
@@ -220,11 +226,15 @@ function generarCodigo(){
   return s;
 }
 
-/* ---------- ICE servers ----------
-   IMPORTANTE: Reemplazá los TURN públicos por uno propio.
-   Ver instrucciones al final del archivo.
-   Mientras tanto, estos son los que andan "a veces":            */
-const ICE_SERVERS = [
+/* ─── TURN de Cloudflare (dinámico) ───
+   1. Creá la TURN key en el dashboard de Cloudflare: Realtime → TURN → Create TURN key
+   2. Desplegá el Worker que genera credenciales (el de 15 líneas) con TURN_KEY_ID y
+      TURN_API_TOKEN como secrets del Worker (nunca los pongas acá).
+   3. Pegá la URL del Worker en TURN_WORKER_URL. Mientras esté vacía, se usa el respaldo. */
+const TURN_WORKER_URL = "https://rummikubhugo-turn.hugo-corbalan.workers.dev";
+
+// Respaldo: STUN/TURN públicos. Se usan si el Worker falla, tarda, o no está configurado.
+const ICE_SERVERS_RESPALDO = [
   {urls:"stun:stun.l.google.com:19302"},
   {urls:"stun:stun1.l.google.com:19302"},
   {urls:"stun:stun2.l.google.com:19302"},
@@ -234,10 +244,33 @@ const ICE_SERVERS = [
   {urls:"turn:openrelay.metered.ca:80", username:"openrelayproject", credential:"openrelayproject"},
   {urls:"turn:openrelay.metered.ca:443", username:"openrelayproject", credential:"openrelayproject"},
   {urls:"turn:openrelay.metered.ca:443?transport=tcp", username:"openrelayproject", credential:"openrelayproject"},
-  // ─── PONÉ ACÁ TU TURN PROPIO ───
-  // {urls:"turn:TU-SERVIDOR.com:3478", username:"rummi", credential:"claveSegura"},
-  // {urls:"turn:TU-SERVIDOR.com:3478?transport=tcp", username:"rummi", credential:"claveSegura"},
 ];
+
+// Cache de credenciales TURN (Cloudflare las emite con TTL de hasta 48h;
+// las refrescamos antes para no quedarnos sin ellas a mitad de partida)
+let iceCache = null; // {servers, expiraEn}
+async function obtenerICEServers(){
+  const ahora = Date.now();
+  if(iceCache && iceCache.expiraEn > ahora) return iceCache.servers;
+  if(!TURN_WORKER_URL){
+    return ICE_SERVERS_RESPALDO;
+  }
+  try{
+    const ctrl = new AbortController();
+    const timeoutId = setTimeout(()=>ctrl.abort(), 5000);
+    const resp = await fetch(TURN_WORKER_URL, {cache:"no-store", signal:ctrl.signal});
+    clearTimeout(timeoutId);
+    const data = await resp.json();
+    if(data && data.iceServers && data.iceServers.length){
+      iceCache = { servers: data.iceServers, expiraEn: ahora + 20*60*60*1000 }; // refresca cada 20h
+      diag("✅ TURN de Cloudflare cargado ("+data.iceServers.length+" entradas)");
+      return iceCache.servers;
+    }
+  }catch(e){
+    diag("⚠️ No pude cargar TURN de Cloudflare, uso respaldo: "+(e && e.message?e.message:e));
+  }
+  return ICE_SERVERS_RESPALDO;
+}
 
 // [FIX-1] Destruir limpiamente antes de recrear
 function destruirPeerYConn(){
@@ -253,11 +286,13 @@ function destruirPeerYConn(){
   }
 }
 
-function crearPeer(idDeseado, alAbrir){
+async function crearPeer(idDeseado, alAbrir){
   destruirPeerYConn(); // [FIX-1]
 
+  const iceServers = await obtenerICEServers(); // [FIX-5]
+
   peer = new Peer(idDeseado || undefined, {
-    config: { iceServers: ICE_SERVERS },
+    config: { iceServers },
     debug: 1
   });
 
@@ -527,6 +562,7 @@ function reconectarSilencioso(){
 }
 function reconectar(){
   const g=cargarGuardado(); if(!g){alert("No hay partida guardada");return;}
+  mostrarAviso("Reconectando...");
   reconectarSilencioso();
 }
 
@@ -1001,6 +1037,8 @@ document.addEventListener("visibilitychange",()=>{
 });
 window.addEventListener("beforeunload",(e)=>{ const g=cargarGuardado(); if(g&&g.hayJuego){ e.preventDefault(); e.returnValue=""; } });
 window.addEventListener("load",()=>{
+  obtenerICEServers(); // precarga el TURN de Cloudflare para que el primer connect sea rápido
+
   const g=cargarGuardado();
   if(g&&g.hayJuego){
     atril=g.atril||new Array(ATRIL_CELDAS).fill(null);
@@ -1016,9 +1054,9 @@ window.addEventListener("load",()=>{
     tiempoRestante=g.tiempoRestante||{A:0,B:0}; turnoInicioTS=g.turnoInicioTS||Date.now();
     miCodigo=g.miCodigo||null; codigoRival=g.codigoRival||null;
     atrilInicioTurno=JSON.parse(JSON.stringify(atril)); mesaInicioTurno=JSON.parse(JSON.stringify(mesa));
-    mostrarAviso("Reconectando automáticamente...");
-    $('btnReconectar').classList.remove('oculto'); $('btnBorrar').classList.remove('oculto');
-    if(miCodigo || codigoRival) reconectarSilencioso();
+    // No reconectamos solo: mostramos la elección al usuario.
+    $('formNuevo').classList.add('oculto');
+    $('avisoRecuperada').classList.remove('oculto');
   }
 });
 </script>
