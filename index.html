@@ -858,7 +858,10 @@ function toggleChat(){
   const quedaOculto = !c.classList.contains('oculto');
   c.classList.toggle('oculto');
   $('chatFlecha').textContent = quedaOculto ? "▼" : "▲";
-  if(!quedaOculto){ chatSinLeer=0; actualizarBadgeChat(); scrollChatAbajo(); $('chatInput').focus(); }
+  if(!quedaOculto){
+    chatSinLeer=0; actualizarBadgeChat(); scrollChatAbajo();
+    setTimeout(()=>{ $('chatZona').scrollIntoView({behavior:"smooth", block:"start"}); }, 50);
+  }
 }
 function actualizarBadgeChat(){
   const b=$('chatBadge');
