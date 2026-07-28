@@ -1000,6 +1000,12 @@ function manejarToqueFicha(ficha, div){
   seleccionada = { ficha, origen, celdaOrigen: parseInt(div.dataset.celdaOrigen), div };
   div.classList.add("seleccionada");
 }
+function esFichaDeEsteTurno(fichaId){
+  return movimientos.some(m => m.desdeAtril && m.ficha.id === fichaId);
+}
+function quitarMovimientoDe(fichaId){
+  movimientos = movimientos.filter(m => !(m.desdeAtril && m.ficha.id === fichaId));
+}
 function manejarToqueCelda(zona, destino, celdaVacia){
   if(!seleccionada) return; if(!celdaVacia) return;
   const { ficha, origen, celdaOrigen } = seleccionada;
@@ -1008,8 +1014,12 @@ function manejarToqueCelda(zona, destino, celdaVacia){
     if(origen==="atril"){ atril[celdaOrigen]=null; mesa[destino]=ficha; movimientos.push({ficha,destino,desdeAtril:true}); }
     else { mesa[celdaOrigen]=null; mesa[destino]=ficha; movimientos.push({ficha,destino,origenMesa:celdaOrigen}); }
   } else {
-    if(origen!=="atril"){ mostrarValidacion(false,"No puede volver al atril."); limpiarSeleccion(); return; }
-    atril[celdaOrigen]=null; atril[destino]=ficha;
+    if(origen==="atril"){ atril[celdaOrigen]=null; atril[destino]=ficha; }
+    else if(origen==="mesa" && esFichaDeEsteTurno(ficha.id)){
+      mesa[celdaOrigen]=null; atril[destino]=ficha; quitarMovimientoDe(ficha.id);
+    } else {
+      mostrarValidacion(false,"Solo podés devolver al atril lo que bajaste en este turno."); limpiarSeleccion(); return;
+    }
   }
   limpiarSeleccion(); limpiarValidacion(); render(); guardar();
 }
@@ -1020,8 +1030,12 @@ function soltar(zona,destino){
     if(desde==="atril"){ atril[orig]=null; mesa[destino]=f; movimientos.push({ficha:f,destino,desdeAtril:true}); }
     else { if(orig===destino) return; mesa[orig]=null; mesa[destino]=f; movimientos.push({ficha:f,destino,origenMesa:orig}); }
   } else {
-    if(desde!=="atril"){ mostrarValidacion(false,"No puede volver al atril."); return; }
-    if(atril[destino]) return; atril[orig]=null; atril[destino]=f;
+    if(desde==="atril"){ if(atril[destino]) return; atril[orig]=null; atril[destino]=f; }
+    else if(desde==="mesa" && esFichaDeEsteTurno(f.id)){
+      if(atril[destino]) return; mesa[orig]=null; atril[destino]=f; quitarMovimientoDe(f.id);
+    } else {
+      mostrarValidacion(false,"Solo podés devolver al atril lo que bajaste en este turno."); return;
+    }
   }
   limpiarValidacion(); render(); guardar();
 }
