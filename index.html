@@ -36,6 +36,11 @@
   #btnDeshacer { background:#c0392b; }
   #btnOrdenar { background:#6a1b9a; }
   #btnSincronizar { background:#00695c; font-size:13px; padding:7px; }
+  #chatBadge { background:#c0392b; color:#fff; border-radius:10px; padding:2px 7px; font-size:12px; font-weight:bold; }
+  #chatMensajes { background:#0d260d; border-radius:8px; padding:6px; max-height:140px; overflow-y:auto; margin:6px 0; font-size:13px; }
+  #chatMensajes div { margin:3px 0; padding:5px 8px; border-radius:8px; word-wrap:break-word; }
+  .chatMsgYo { background:#1565c0; margin-left:20%; }
+  .chatMsgRival { background:#2a5a2a; margin-right:20%; }
   #btnNuevaPartida { background:#0277bd; font-size:17px; padding:14px; }
   #aviso { background:#1565c0; color:#fff; padding:9px; border-radius:8px; margin:6px 0; }
   .detalle { font-size:13px; color:#cde; }
@@ -125,6 +130,9 @@
       <input type="number" id="ajedrezInput" placeholder="Minutos totales (ej 5)" value="5">
       <button class="rol" onclick="soyA()">Soy el ANFITRIÓN (reparto yo)</button>
       <button class="rol" onclick="soyB()">Me UNO a la partida</button>
+      <div class="titulo" style="margin-top:14px;">¿Sin Internet? (misma red WiFi)</div>
+      <button class="btnSec" onclick="offlineSoyA()">Anfitrión sin Internet (genero código)</button>
+      <button class="btnSec" onclick="offlineSoyB()">Invitado sin Internet (tengo un código)</button>
     </div>
   </div>
 
@@ -142,6 +150,34 @@
       <div class="titulo">Escribí el código que te pasaron</div>
       <input type="text" id="codigoInput" placeholder="Ej: RMK-7X4QP" style="text-transform:uppercase;">
       <button onclick="conectarB()">Conectar</button>
+    </div>
+  </div>
+
+  <div id="offlineFlujoA" class="oculto">
+    <div class="paso">
+      <div class="titulo">Paso 1: copiá este código</div>
+      <div class="detalle">Envíaselo a tu compañero por Bluetooth, o mostrale la pantalla para que lo escriba. No hace falta Internet, solo estar en la misma WiFi (puede ser el hotspot de uno de los dos).</div>
+      <textarea id="offlineOfertaTexto" readonly></textarea>
+      <button class="btnSec" onclick="copiarTextarea('offlineOfertaTexto')">Copiar código</button>
+      <div class="titulo" style="margin-top:14px;">Paso 2: pegá acá la respuesta que te devuelva</div>
+      <textarea id="offlineRespuestaInput" placeholder="Pegá acá la respuesta de tu compañero"></textarea>
+      <button onclick="offlineConectarConRespuesta()">Conectar</button>
+      <button style="background:#c0392b" onclick="offlineCancelar()">Cancelar</button>
+    </div>
+  </div>
+
+  <div id="offlineFlujoB" class="oculto">
+    <div class="paso">
+      <div class="titulo">Paso 1: pegá el código que te pasaron</div>
+      <textarea id="offlineOfertaInput" placeholder="Pegá acá el código del anfitrión"></textarea>
+      <button onclick="offlineGenerarRespuesta()">Generar respuesta</button>
+      <div id="offlineRespuestaZona" class="oculto" style="margin-top:14px;">
+        <div class="titulo">Paso 2: copiá esto y mandáselo de vuelta</div>
+        <textarea id="offlineRespuestaTexto" readonly></textarea>
+        <button class="btnSec" onclick="copiarTextarea('offlineRespuestaTexto')">Copiar respuesta</button>
+        <div class="detalle">Apenas tu compañero la pegue de su lado, se conecta solo.</div>
+      </div>
+      <button style="background:#c0392b" onclick="offlineCancelar()">Cancelar</button>
     </div>
   </div>
 
@@ -169,6 +205,19 @@
       <button id="btnRobar" onclick="robar()">Robar del pozo y pasar</button>
       <button id="btnSincronizar" onclick="pedirEstado()">🔄 Sincronizar (si quedó trabado)</button>
     </div>
+    <div class="paso" id="chatZona">
+      <div class="titulo" onclick="toggleChat()" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center;">
+        <span>💬 Chat</span>
+        <span><span id="chatBadge" class="oculto"></span> <span id="chatFlecha">▼</span></span>
+      </div>
+      <div id="chatCuerpo" class="oculto">
+        <div id="chatMensajes"></div>
+        <div style="display:flex; gap:6px;">
+          <input type="text" id="chatInput" placeholder="Escribí un mensaje..." style="flex:1; margin:0;" onkeydown="if(event.key==='Enter'){enviarChat();}">
+          <button style="width:auto; padding:11px 16px; margin:0;" onclick="enviarChat()">Enviar</button>
+        </div>
+      </div>
+    </div>
   </div>
 
 <script>
@@ -180,7 +229,7 @@ function setDiag(t){ $('diag').textContent=t; }
 /* ---------- Persistencia ---------- */
 const CLAVE = "rummikub_estado_v8";
 function guardar() {
-  try { localStorage.setItem(CLAVE, JSON.stringify({ atril, fichasEnPozo, mesa, turnoInicial, numeroTurno, esAnfitrion, yaAbri, pozoReal, nombres, modoJuego, limitePuntaje, victorias, puntos, serieTerminada, ganadorSerie, contadorRival, relojTipo, relojArenaSeg, relojAjedrezMin, tiempoRestante, turnoInicioTS, miCodigo, codigoRival, hayJuego:true })); } catch(e){}
+  try { localStorage.setItem(CLAVE, JSON.stringify({ atril, fichasEnPozo, mesa, turnoInicial, numeroTurno, esAnfitrion, yaAbri, pozoReal, nombres, modoJuego, limitePuntaje, victorias, puntos, serieTerminada, ganadorSerie, contadorRival, relojTipo, relojArenaSeg, relojAjedrezMin, tiempoRestante, turnoInicioTS, miCodigo, codigoRival, modoConexion, hayJuego:true })); } catch(e){}
 }
 function cargarGuardado() { try { const s=localStorage.getItem(CLAVE); return s?JSON.parse(s):null; } catch(e){ return null; } }
 function borrarPartida() {
@@ -203,6 +252,7 @@ function soltarWakeLock(){ try{ if(wakeLock){wakeLock.release();wakeLock=null;} 
    [FIX-5] TURN de Cloudflare dinámico (con respaldo público)
    ══════════════════════════════════════════════════════════════ */
 let peer=null, conn=null, esAnfitrion=false, miCodigo=null, codigoRival=null;
+let modoConexion="internet", pcOffline=null; // [FIX-6] modo sin Internet
 let intentandoReconectar=false, conexionEnProgreso=false;
 let reintentosFallidos=0;
 const MAX_REINTENTOS = 20;
@@ -224,6 +274,108 @@ function generarCodigo(){
   let s="RMK-";
   for(let i=0;i<5;i++) s+=alfabeto[Math.floor(Math.random()*alfabeto.length)];
   return s;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   [FIX-6] MODO SIN INTERNET — WebRTC directo, sin PeerJS.
+   Ambos deben estar en la misma red WiFi (o el hotspot de uno).
+   El intercambio del "código" (oferta/respuesta SDP) es manual:
+   se copia y se pasa a mano (Bluetooth, mostrando la pantalla, etc).
+   Una vez conectado, usa exactamente la misma lógica de juego
+   que el modo con Internet (usarConexion, watchdog, etc).
+   ══════════════════════════════════════════════════════════════ */
+function crearWrapperDataChannel(dc, pc){
+  const wrapper = {
+    open:false, peerConnection: pc, _listeners:{},
+    on(ev,cb){ (this._listeners[ev] ||= []).push(cb); },
+    removeAllListeners(){ this._listeners = {}; },
+    send(o){ if(dc.readyState==="open"){ try{ dc.send(JSON.stringify(o)); }catch(e){} } },
+    close(){ try{ dc.close(); }catch(e){} }
+  };
+  dc.onopen = ()=>{ wrapper.open=true; (wrapper._listeners['open']||[]).forEach(cb=>cb()); };
+  dc.onclose = ()=>{ wrapper.open=false; (wrapper._listeners['close']||[]).forEach(cb=>cb()); };
+  dc.onerror = (err)=>{ (wrapper._listeners['error']||[]).forEach(cb=>cb(err)); };
+  dc.onmessage = (e)=>{
+    let data; try{ data = JSON.parse(e.data); }catch(err){ return; }
+    (wrapper._listeners['data']||[]).forEach(cb=>cb(data));
+  };
+  return wrapper;
+}
+function esperarICECompleto(pc){
+  return new Promise(resolve=>{
+    if(pc.iceGatheringState === "complete"){ resolve(); return; }
+    const chequear = ()=>{ if(pc.iceGatheringState==="complete"){ pc.removeEventListener("icegatheringstatechange", chequear); resolve(); } };
+    pc.addEventListener("icegatheringstatechange", chequear);
+    setTimeout(resolve, 4000);
+  });
+}
+function codificar(obj){ return btoa(unescape(encodeURIComponent(JSON.stringify(obj)))); }
+function decodificar(txt){ return JSON.parse(decodeURIComponent(escape(atob(txt.trim())))); }
+function leerAjustesFormulario(){
+  modoJuego = document.querySelector('input[name="modoRadio"]:checked').value;
+  limitePuntaje = parseInt($('limiteInput').value) || 100;
+  relojTipo = document.querySelector('input[name="relojRadio"]:checked').value;
+  relojArenaSeg = parseInt($('arenaInput').value) || 60;
+  relojAjedrezMin = parseInt($('ajedrezInput').value) || 5;
+}
+function copiarTextarea(id){
+  const el = $(id); el.select(); el.setSelectionRange(0, 999999);
+  navigator.clipboard.writeText(el.value).then(()=>alert("¡Copiado!"), ()=>alert("Seleccioná el texto y copiálo manualmente."));
+}
+function offlineCancelar(){
+  try{ if(pcOffline) pcOffline.close(); }catch(e){}
+  pcOffline = null; conn = null; modoConexion = "internet";
+  ['offlineFlujoA','offlineFlujoB'].forEach(id=>$(id).classList.add('oculto'));
+  $('elegirRol').classList.remove('oculto'); $('formNuevo').classList.remove('oculto');
+}
+async function offlineSoyA(){
+  esAnfitrion=true; recuperado=false; modoConexion="offline";
+  nombres.A = $('miNombreInput').value.trim() || "Anfitrión";
+  leerAjustesFormulario();
+  $('elegirRol').classList.add('oculto'); $('offlineFlujoA').classList.remove('oculto');
+  setDiag("Soy ANFITRIÓN (sin Internet).");
+  pcOffline = new RTCPeerConnection({ iceServers: [] });
+  const dc = pcOffline.createDataChannel("game");
+  const wrapper = crearWrapperDataChannel(dc, pcOffline);
+  conn = wrapper;
+  usarConexion(wrapper);
+  const offer = await pcOffline.createOffer();
+  await pcOffline.setLocalDescription(offer);
+  await esperarICECompleto(pcOffline);
+  $('offlineOfertaTexto').value = codificar({ type: pcOffline.localDescription.type, sdp: pcOffline.localDescription.sdp });
+}
+async function offlineConectarConRespuesta(){
+  const txt = $('offlineRespuestaInput').value.trim();
+  if(!txt){ alert("Pegá primero la respuesta de tu compañero"); return; }
+  try{
+    const datos = decodificar(txt);
+    await pcOffline.setRemoteDescription(new RTCSessionDescription(datos));
+    diag("Respuesta aplicada, esperando que abra el canal...");
+  }catch(e){ alert("Ese código no es válido. Revisalo y volvé a pegarlo completo."); }
+}
+function offlineSoyB(){
+  nombres.B = $('miNombreInput').value.trim() || "Invitado";
+  modoConexion = "offline"; esAnfitrion=false;
+  $('elegirRol').classList.add('oculto'); $('offlineFlujoB').classList.remove('oculto');
+  setDiag("Soy INVITADO (sin Internet).");
+}
+async function offlineGenerarRespuesta(){
+  const txt = $('offlineOfertaInput').value.trim();
+  if(!txt){ alert("Pegá primero el código del anfitrión"); return; }
+  let datos;
+  try{ datos = decodificar(txt); }catch(e){ alert("Ese código no es válido, revisalo."); return; }
+  pcOffline = new RTCPeerConnection({ iceServers: [] });
+  pcOffline.ondatachannel = (event)=>{
+    const wrapper = crearWrapperDataChannel(event.channel, pcOffline);
+    conn = wrapper;
+    usarConexion(wrapper);
+  };
+  await pcOffline.setRemoteDescription(new RTCSessionDescription(datos));
+  const answer = await pcOffline.createAnswer();
+  await pcOffline.setLocalDescription(answer);
+  await esperarICECompleto(pcOffline);
+  $('offlineRespuestaTexto').value = codificar({ type: pcOffline.localDescription.type, sdp: pcOffline.localDescription.sdp });
+  $('offlineRespuestaZona').classList.remove('oculto');
 }
 
 /* ─── TURN de Cloudflare (dinámico) ───
@@ -432,6 +584,10 @@ function canalAbierto(){ return !!(conn && conn.open); }
 
 // [FIX-2] Reconexión con backoff exponencial para AMBOS roles
 function programarReconexion(){
+  if(modoConexion === "offline"){
+    mostrarAviso("Se cortó la conexión sin Internet. Volvé a 'Empezar de cero' y repitan el intercambio de códigos.");
+    return;
+  }
   if(intentandoReconectar || conexionEnProgreso) return;
   if(reintentosFallidos >= MAX_REINTENTOS){
     mostrarAviso("Demasiados intentos ("+MAX_REINTENTOS+"). Recargá la página.");
@@ -547,6 +703,10 @@ function conectarB(){
 function copiarCodigo(){ navigator.clipboard.writeText(miCodigo).then(()=>alert("¡Copiado!"),()=>alert("Código: "+miCodigo)); }
 
 function reconectarSilencioso(){
+  if(modoConexion === "offline"){
+    mostrarAviso("Las partidas sin Internet no se reconectan solas. Elegí 'Empezar de cero' y repitan el intercambio de códigos (Anfitrión/Invitado sin Internet).");
+    return;
+  }
   if(esAnfitrion){
     $('elegirRol').classList.add('oculto'); $('flujoA').classList.remove('oculto');
     $('codigoMostrado').textContent = miCodigo;
@@ -586,6 +746,7 @@ let serieTerminada=false, ganadorSerie=null;
 let contadorRival=14;
 let relojTipo="ninguno", relojArenaSeg=60, relojAjedrezMin=5;
 let tiempoRestante={A:0,B:0}, turnoInicioTS=null;
+let chatSinLeer=0;
 
 function miId(){ return esAnfitrion ? "A" : "B"; }
 function rivalId(){ return esAnfitrion ? "B" : "A"; }
@@ -686,6 +847,43 @@ function manejarMensaje(msg){
     puntos[msg.perdedorId] = (puntos[msg.perdedorId]||0) + msg.puntos;
     comprobarFinSerie(); actualizarMarcador(); guardar();
   }
+  else if(msg.tipo==="chat"){
+    agregarMensajeChat("rival", msg.texto);
+    if($('chatCuerpo').classList.contains('oculto')){ chatSinLeer++; actualizarBadgeChat(); }
+  }
+}
+/* ---------- Chat ---------- */
+function toggleChat(){
+  const c=$('chatCuerpo');
+  const quedaOculto = !c.classList.contains('oculto');
+  c.classList.toggle('oculto');
+  $('chatFlecha').textContent = quedaOculto ? "▼" : "▲";
+  if(!quedaOculto){ chatSinLeer=0; actualizarBadgeChat(); scrollChatAbajo(); $('chatInput').focus(); }
+}
+function actualizarBadgeChat(){
+  const b=$('chatBadge');
+  if(chatSinLeer>0){ b.textContent=chatSinLeer; b.classList.remove('oculto'); }
+  else b.classList.add('oculto');
+}
+function escaparHtml(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+function scrollChatAbajo(){ const d=$('chatMensajes'); d.scrollTop = d.scrollHeight; }
+function agregarMensajeChat(quien, texto){
+  const d=$('chatMensajes');
+  const div=document.createElement('div');
+  div.className = quien==="yo" ? "chatMsgYo" : "chatMsgRival";
+  const nombre = quien==="yo" ? nombres[miId()] : nombres[rivalId()];
+  div.innerHTML = "<b>"+escaparHtml(nombre)+":</b> "+escaparHtml(texto);
+  d.appendChild(div);
+  scrollChatAbajo();
+}
+function enviarChat(){
+  const inp=$('chatInput');
+  const texto=inp.value.trim();
+  if(!texto) return;
+  if(!canalAbierto()){ mostrarAviso("Sin conexión, no se pudo enviar el mensaje."); return; }
+  enviar({tipo:"chat", texto});
+  agregarMensajeChat("yo", texto);
+  inp.value="";
 }
 function pedirEstado(){
   if(!canalAbierto()){ mostrarAviso("Sin conexión."); programarReconexion(); return; }
@@ -1066,7 +1264,7 @@ window.addEventListener("load",()=>{
     contadorRival=g.contadorRival!=null?g.contadorRival:14;
     relojTipo=g.relojTipo||"ninguno"; relojArenaSeg=g.relojArenaSeg||60; relojAjedrezMin=g.relojAjedrezMin||5;
     tiempoRestante=g.tiempoRestante||{A:0,B:0}; turnoInicioTS=g.turnoInicioTS||Date.now();
-    miCodigo=g.miCodigo||null; codigoRival=g.codigoRival||null;
+    miCodigo=g.miCodigo||null; codigoRival=g.codigoRival||null; modoConexion=g.modoConexion||"internet";
     atrilInicioTurno=JSON.parse(JSON.stringify(atril)); mesaInicioTurno=JSON.parse(JSON.stringify(mesa));
     // No reconectamos solo: mostramos la elección al usuario.
     $('formNuevo').classList.add('oculto');
