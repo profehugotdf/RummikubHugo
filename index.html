@@ -231,7 +231,7 @@ function setDiag(t){ $('diag').textContent=t; }
 /* ---------- Persistencia ---------- */
 const CLAVE = "rummikub_estado_v8";
 function guardar() {
-  try { localStorage.setItem(CLAVE, JSON.stringify({ atril, fichasEnPozo, mesa, turnoInicial, numeroTurno, esAnfitrion, yaAbri, pozoReal, nombres, modoJuego, limitePuntaje, victorias, puntos, serieTerminada, ganadorSerie, contadorRival, relojTipo, relojArenaSeg, relojAjedrezMin, tiempoRestante, turnoInicioTS, miCodigo, codigoRival, modoConexion, hayJuego:true })); } catch(e){}
+  try { localStorage.setItem(CLAVE, JSON.stringify({ atril, fichasEnPozo, mesa, turnoInicial, numeroTurno, idMano, esAnfitrion, yaAbri, pozoReal, nombres, modoJuego, limitePuntaje, victorias, puntos, serieTerminada, ganadorSerie, contadorRival, relojTipo, relojArenaSeg, relojAjedrezMin, tiempoRestante, turnoInicioTS, miCodigo, codigoRival, modoConexion, hayJuego:true })); } catch(e){}
 }
 function cargarGuardado() { try { const s=localStorage.getItem(CLAVE); return s?JSON.parse(s):null; } catch(e){ return null; } }
 function borrarPartida() {
@@ -595,7 +595,8 @@ function usarConexion(c){
     enviar({tipo:"nombre", id:miId(), nombre:nombres[miId()]});
     if(esAnfitrion){
       if(turnoInicial===null) repartir();
-      else { enviar({tipo:"estado",mesa,pozo:fichasEnPozo,numeroTurno,conteo:fichasAtril().length}); render(); actualizarUI(); actualizarMarcador(); }
+      else if(partidaTerminada){ render(); actualizarUI(); actualizarMarcador(); }
+      else { enviar({tipo:"estado",mesa,pozo:fichasEnPozo,numeroTurno,idMano,conteo:fichasAtril().length}); render(); actualizarUI(); actualizarMarcador(); }
     } else { render(); actualizarUI(); actualizarMarcador(); pedirEstado(); }
 
     // [FIX-4] Monitorear ICE para restart
@@ -740,6 +741,21 @@ window.addEventListener("offline",()=>{
   mostrarAviso("Sin internet. Esperando...");
 });
 
+// [FIX-8] Page Lifecycle: el navegador puede "congelar" o descartar la
+// pestaña en segundo plano. Estos eventos avisan cuando eso pasa y cuando
+// se recupera, para guardar a tiempo y reconectar apenas vuelva.
+document.addEventListener("freeze", ()=>{
+  diag("❄️ Página congelada por el navegador (segundo plano).");
+  guardar();
+});
+document.addEventListener("resume", ()=>{
+  diag("🌡️ Página reactivada.");
+  if(!canalAbierto() && turnoInicial!==null) programarReconexion();
+});
+if(document.wasDiscarded){
+  diag("⚠️ La pestaña fue descartada por el navegador. Reconectando...");
+}
+
 /* ---------- Flujo de conexión inicial ---------- */
 function soyA(){
   esAnfitrion=true;
@@ -815,7 +831,7 @@ const VEL_REPLAY=400;
 let atril=new Array(ATRIL_CELDAS).fill(null);
 let mesa=new Array(MESA_CELDAS).fill(null);
 let pozoReal=[], fichasEnPozo=0;
-let turnoInicial=null, numeroTurno=0;
+let turnoInicial=null, numeroTurno=0, idMano=0;
 let reproduciendo=false, recuperado=false, yaAbri=false, partidaTerminada=false;
 let inicioReproduccion=0;
 let atrilInicioTurno=null, mesaInicioTurno=null, movimientos=[];
@@ -851,11 +867,12 @@ function repartir(){
   pozoReal=mazo; fichasEnPozo=pozoReal.length;
   turnoInicial = Math.random()<0.5 ? "A" : "B";
   numeroTurno = 1;
+  idMano++;
   mesa=new Array(MESA_CELDAS).fill(null);
   contadorRival = 14;
   turnoInicioTS = Date.now();
   if(relojTipo==="ajedrez") tiempoRestante = { A: relojAjedrezMin*60, B: relojAjedrezMin*60 };
-  enviar({tipo:"reparto",mano:mB,pozo:fichasEnPozo,turnoInicial,numeroTurno,modoJuego,limitePuntaje,relojTipo,relojArenaSeg,relojAjedrezMin,tiempoRestante,ts:turnoInicioTS});
+  enviar({tipo:"reparto",mano:mB,pozo:fichasEnPozo,turnoInicial,numeroTurno,idMano,modoJuego,limitePuntaje,relojTipo,relojArenaSeg,relojAjedrezMin,tiempoRestante,ts:turnoInicioTS});
   atril=new Array(ATRIL_CELDAS).fill(null); mA.forEach(f=>ponerEnAtril(f));
   yaAbri=false; partidaTerminada=false; reproduciendo=false;
   $('btnNuevaPartida').classList.add('oculto');
@@ -875,7 +892,7 @@ function manejarMensaje(msg){
   else if(msg.tipo==="reparto"){
     atril=new Array(ATRIL_CELDAS).fill(null); msg.mano.forEach(f=>ponerEnAtril(f));
     mesa=new Array(MESA_CELDAS).fill(null);
-    fichasEnPozo=msg.pozo; turnoInicial=msg.turnoInicial; numeroTurno=msg.numeroTurno;
+    fichasEnPozo=msg.pozo; turnoInicial=msg.turnoInicial; numeroTurno=msg.numeroTurno; idMano=msg.idMano||idMano;
     modoJuego=msg.modoJuego||"conteo"; limitePuntaje=msg.limitePuntaje||100;
     relojTipo=msg.relojTipo||"ninguno"; relojArenaSeg=msg.relojArenaSeg||60; relojAjedrezMin=msg.relojAjedrezMin||5;
     tiempoRestante=msg.tiempoRestante||{A:0,B:0}; turnoInicioTS=msg.ts||Date.now();
@@ -906,19 +923,20 @@ function manejarMensaje(msg){
   }
   else if(msg.tipo==="conteo"){ contadorRival=msg.n; actualizarMarcador(); }
   else if(msg.tipo==="pedirEstado"){
-    enviar({tipo:"estado",mesa,pozo:fichasEnPozo,numeroTurno,conteo:fichasAtril().length});
+    enviar({tipo:"estado",mesa,pozo:fichasEnPozo,numeroTurno,idMano,conteo:fichasAtril().length});
   }
   else if(msg.tipo==="ping"){
     enviar({tipo:"pong", numeroTurno});
     if(msg.numeroTurno > numeroTurno) enviar({tipo:"pedirEstado"});
-    else if(msg.numeroTurno < numeroTurno) enviar({tipo:"estado",mesa,pozo:fichasEnPozo,numeroTurno,conteo:fichasAtril().length});
+    else if(msg.numeroTurno < numeroTurno) enviar({tipo:"estado",mesa,pozo:fichasEnPozo,numeroTurno,idMano,conteo:fichasAtril().length});
   }
   else if(msg.tipo==="pong"){ /* el watchdog ya se reseteó en conn.on('data') */ }
   else if(msg.tipo==="estado"){
     if(msg.conteo!=null){ contadorRival=msg.conteo; actualizarMarcador(); }
-    if(msg.numeroTurno > numeroTurno){
+    const esMasNueva = (msg.idMano||0) > idMano || ((msg.idMano||0)===idMano && msg.numeroTurno > numeroTurno);
+    if(esMasNueva){
       reproduciendo=false;
-      mesa=msg.mesa; fichasEnPozo=msg.pozo; numeroTurno=msg.numeroTurno;
+      mesa=msg.mesa; fichasEnPozo=msg.pozo; numeroTurno=msg.numeroTurno; idMano=msg.idMano||idMano;
       iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
       log("🔄 Sincronizado (turno "+numeroTurno+").");
     }
@@ -1355,7 +1373,7 @@ window.addEventListener("load",()=>{
     contadorRival=g.contadorRival!=null?g.contadorRival:14;
     relojTipo=g.relojTipo||"ninguno"; relojArenaSeg=g.relojArenaSeg||60; relojAjedrezMin=g.relojAjedrezMin||5;
     tiempoRestante=g.tiempoRestante||{A:0,B:0}; turnoInicioTS=g.turnoInicioTS||Date.now();
-    miCodigo=g.miCodigo||null; codigoRival=g.codigoRival||null; modoConexion=g.modoConexion||"internet";
+    miCodigo=g.miCodigo||null; codigoRival=g.codigoRival||null; modoConexion=g.modoConexion||"internet"; idMano=g.idMano||0;
     atrilInicioTurno=JSON.parse(JSON.stringify(atril)); mesaInicioTurno=JSON.parse(JSON.stringify(mesa));
     // No reconectamos solo: mostramos la elección al usuario.
     $('formNuevo').classList.add('oculto');
