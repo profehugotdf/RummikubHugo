@@ -113,6 +113,10 @@
     <div id="avisoRecuperada" class="oculto">
       <div class="titulo">Tenés una partida guardada sin terminar</div>
       <div class="detalle" style="margin-bottom:8px;">¿Querés seguirla o arrancar una nueva?</div>
+      <div id="avisoCodigoNuevo" class="oculto">
+        <div class="detalle">Si tu compañero te pasó un código nuevo (porque le cambió a él), pegalo acá antes de reconectar. Si no, dejalo como está.</div>
+        <input type="text" id="codigoNuevoInput" placeholder="Ej: RMK-7X4QP" style="text-transform:uppercase;">
+      </div>
       <button class="btnSec" onclick="reconectar()">Reconectar (seguir la partida guardada)</button>
       <button style="background:#c0392b" onclick="borrarPartida()">Empezar de cero (borra la partida guardada)</button>
     </div>
@@ -818,6 +822,10 @@ function reconectarSilencioso(){
 }
 function reconectar(){
   const g=cargarGuardado(); if(!g){alert("No hay partida guardada");return;}
+  if(!esAnfitrion){
+    const nuevo = $('codigoNuevoInput').value.trim().toUpperCase();
+    if(nuevo){ codigoRival = nuevo; guardar(); }
+  }
   mostrarAviso("Reconectando...");
   reconectarSilencioso();
 }
@@ -1378,6 +1386,10 @@ window.addEventListener("load",()=>{
     // No reconectamos solo: mostramos la elección al usuario.
     $('formNuevo').classList.add('oculto');
     $('avisoRecuperada').classList.remove('oculto');
+    if(!esAnfitrion){
+      $('avisoCodigoNuevo').classList.remove('oculto');
+      $('codigoNuevoInput').value = codigoRival || "";
+    }
   }
 });
 </script>
