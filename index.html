@@ -867,7 +867,7 @@ function crearMazo(){
   m.push({id:id++,comodin:true}); m.push({id:id++,comodin:true}); return m;
 }
 function mezclar(a){ for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
-function ponerEnAtril(f){ const i=atril.indexOf(null); if(i>=0) atril[i]=f; }
+function ponerEnAtril(f){ const i=atril.indexOf(null); if(i>=0) atril[i]=f; else atril.push(f); }
 
 function repartir(){
   const mazo=mezclar(crearMazo());
@@ -1253,7 +1253,8 @@ function renderMesa(){
 }
 function renderAtril(){
   const c=$('atril'); c.innerHTML="";
-  for(let i=0;i<ATRIL_CELDAS;i++){
+  const totalCeldas = Math.max(ATRIL_CELDAS, atril.length);
+  for(let i=0;i<totalCeldas;i++){
     const cel=document.createElement("div"); cel.className="celda"; cel.dataset.celda=i; cel.dataset.zona="atril";
     cel.addEventListener("click", ()=> manejarToqueCelda("atril", i, !atril[i]));
     const f=atril[i];
