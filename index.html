@@ -49,17 +49,17 @@
 
   #mesa { display:grid; grid-template-columns:repeat(21, minmax(0,1fr)); gap:1px; background:#0d3d0d; padding:2px; border-radius:6px; }
   #mesa .celda { aspect-ratio:3/4; background:rgba(255,255,255,.05); border-radius:2px; }
-  #mesa .ficha { font-size:clamp(8px, 2.5vw, 19px); font-weight:900; border-radius:2px; box-shadow:0 1px 1px rgba(0,0,0,.4); }
+  #mesa .ficha { font-size:clamp(9px, 2.9vw, 21px); font-weight:900; border-radius:2px; box-shadow:0 1px 1px rgba(0,0,0,.4); }
 
   #atril { display:grid; grid-template-columns:repeat(10, minmax(0,1fr)); gap:3px; background:#0d260d; padding:5px; border-radius:8px; }
   #atril .celda { aspect-ratio:3/4; background:rgba(255,255,255,.07); border-radius:4px; }
-  #atril .ficha { font-size:clamp(14px, 4.4vw, 27px); font-weight:900; border-radius:4px; box-shadow:0 2px 3px rgba(0,0,0,.45); }
+  #atril .ficha { font-size:clamp(15px, 4.8vw, 29px); font-weight:900; border-radius:4px; box-shadow:0 2px 3px rgba(0,0,0,.45); }
 
   .celda { position:relative; }
-  .ficha { width:100%; height:100%; background:#f5f0e1 !important; display:flex; align-items:center; justify-content:center; font-weight:900; touch-action:none; user-select:none; text-shadow:0 0 1px rgba(0,0,0,.25); }
+  .ficha { width:100%; height:100%; background:#f5f0e1 !important; display:flex; align-items:center; justify-content:center; font-weight:900; -webkit-text-stroke:.4px currentColor; touch-action:none; user-select:none; text-shadow:0 0 1px rgba(0,0,0,.25); }
   .c-rojo   { color:#e60000 !important; background:#ffecec !important; }
-  .c-azul   { color:#0047d6 !important; background:#e8f0ff !important; }
-  .c-negro  { color:#ffffff !important; background:#1a1a1a !important; }
+  .c-azul   { color:#0055ff !important; background:#f0f7ff !important; }
+  .c-negro  { color:#000000 !important; background:#d8d8d8 !important; }
   .c-naranja{ color:#b58900 !important; background:#fffbe0 !important; }
   .comodin{ color:#c0392b !important; }
   .arrastrando { opacity:.4; }
@@ -95,7 +95,7 @@
     #mesa { height:66vh; grid-auto-rows:minmax(0,1fr); max-width:calc(66vh / 8 * 0.75 * 21); margin:0 auto; }
     #mesa .celda { aspect-ratio:auto; height:100%; }
     #atril { gap:4px; padding:4px; }
-    #atril .ficha { font-size:clamp(13px, 1.6vw, 24px); }
+    #atril .ficha { font-size:clamp(14px, 1.8vw, 26px); }
     #zonaJuego .titulo { font-size:12px; margin-bottom:2px; }
     #zonaJuego button { padding:5px; margin:2px 0; font-size:12px; }
     #btnNuevaPartida { font-size:13px; padding:7px; }
@@ -267,7 +267,7 @@ const RECONNECT_MAX_MS  = 30000;  // techo del backoff
 
 // [FIX-3] Watchdog
 let ultimoMensajeRecibido = 0;
-const WATCHDOG_SILENCIO_MS = 15000; // 15s sin NINGÚN mensaje → muerto
+const WATCHDOG_SILENCIO_MS = 30000; // 30s sin NINGÚN mensaje → muerto (más tolerante a segundo plano breve)
 const PING_INTERVAL_MS = 3000;
 
 function log(t){ const l=$('log'); l.textContent += "\n"+t; l.scrollTop=l.scrollHeight; }
@@ -729,11 +729,32 @@ setInterval(()=>{
   }
 }, 5000);
 
-// Heartbeat (ping cada 3s)
-setInterval(()=>{
-  if(!canalAbierto() || partidaTerminada || turnoInicial===null) return;
-  enviar({tipo:"ping", numeroTurno});
-}, PING_INTERVAL_MS);
+// [FIX-9] Heartbeat en Web Worker: un setInterval normal se frena cuando
+// el navegador pasa a segundo plano (aunque sea unos segundos, para
+// contestar un WhatsApp). El Worker corre aparte y no sufre ese freno,
+// así el otro teléfono sigue recibiendo el latido y no cierra la conexión
+// por error.
+let hbWorker = null;
+function iniciarHeartbeatWorker(){
+  if(hbWorker) return;
+  try{
+    const codigo = "let i=null; onmessage=function(e){ if(e.data==='start'){ if(i)clearInterval(i); i=setInterval(()=>postMessage('tick'), "+PING_INTERVAL_MS+"); } if(e.data==='stop'){ clearInterval(i); } };";
+    const blob = new Blob([codigo], {type:"application/javascript"});
+    hbWorker = new Worker(URL.createObjectURL(blob));
+    hbWorker.onmessage = ()=>{
+      if(!canalAbierto() || partidaTerminada || turnoInicial===null) return;
+      enviar({tipo:"ping", numeroTurno});
+    };
+    hbWorker.postMessage("start");
+  }catch(e){
+    // Si el navegador no soporta Workers, seguimos con el setInterval normal.
+    setInterval(()=>{
+      if(!canalAbierto() || partidaTerminada || turnoInicial===null) return;
+      enviar({tipo:"ping", numeroTurno});
+    }, PING_INTERVAL_MS);
+  }
+}
+iniciarHeartbeatWorker();
 
 // Red del sistema
 window.addEventListener("online",()=>{
