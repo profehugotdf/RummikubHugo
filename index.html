@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light only">
 <title>Rummikub</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1b3d1b">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style>
   :root { color-scheme: light only; }
@@ -227,6 +234,13 @@
   </div>
 
 <script>
+/* ---------- PWA: registrar el Service Worker ---------- */
+if("serviceWorker" in navigator){
+  window.addEventListener("load", ()=>{
+    navigator.serviceWorker.register("sw.js").catch(()=>{});
+  });
+}
+
 /* ---------- Diagnóstico visible ---------- */
 const $ = (id)=>document.getElementById(id);
 function diag(t){ const d=$('diag'); d.textContent += "\n"+t; d.scrollTop=d.scrollHeight; }
