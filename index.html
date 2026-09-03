@@ -274,15 +274,20 @@ function soltarWakeLock(){ try{ if(wakeLock){wakeLock.release();wakeLock=null;} 
 let peer=null, conn=null, esAnfitrion=false, miCodigo=null, codigoRival=null;
 let modoConexion="internet", pcOffline=null; // [FIX-6] modo sin Internet
 let intentandoReconectar=false, conexionEnProgreso=false;
+let intentosMismoCodigo=0;
 let reintentosFallidos=0;
 const MAX_REINTENTOS = 20;
-const RECONNECT_BASE_MS = 2000;   // primer reintento a los 2s
+const RECONNECT_BASE_MS = 4000;   // primer reintento a los 4s (le da margen al servidor de PeerJS para liberar el código viejo)
 const RECONNECT_MAX_MS  = 30000;  // techo del backoff
 
 // [FIX-3] Watchdog
 let ultimoMensajeRecibido = 0;
 const WATCHDOG_SILENCIO_MS = 30000; // 30s sin NINGÚN mensaje → muerto (más tolerante a segundo plano breve)
 const PING_INTERVAL_MS = 3000;
+
+// [FIX-10] Evitar pedidos de robo duplicados (invitado)
+let esperandoFicha = false;
+let timeoutEsperaFicha = null;
 
 function log(t){ const l=$('log'); l.textContent += "\n"+t; l.scrollTop=l.scrollHeight; }
 function setLog(t){ $('log').textContent=t; }
@@ -549,12 +554,20 @@ async function crearPeer(idDeseado, alAbrir){
   peer.on('open',(id)=>{
     diag("Peer listo (id "+id+")");
     reintentosFallidos = 0; // reset backoff
+    intentosMismoCodigo = 0; // el código quedó confirmado, reseteamos el contador
     if(alAbrir) alAbrir(id);
   });
 
   peer.on('error',(err)=>{
     diag("⚠️ Peer error: "+err.type+(err.message?(" — "+err.message):""));
     if(err.type==="unavailable-id" && esAnfitrion){
+      if(intentosMismoCodigo < 2){
+        intentosMismoCodigo++;
+        diag("Código '"+miCodigo+"' todavía aparece ocupado, reintentando en unos segundos (intento "+intentosMismoCodigo+"/2)...");
+        setTimeout(()=>{ crearPeer(miCodigo, alAbrir); }, 4000);
+        return;
+      }
+      intentosMismoCodigo = 0;
       miCodigo=generarCodigo();
       $('codigoMostrado').textContent=miCodigo;
       guardar();
@@ -952,6 +965,7 @@ function manejarMensaje(msg){
   else if(msg.tipo==="jugada"){ reproducirJugada(msg); }
   else if(msg.tipo==="pedirFicha"){
     if(esAnfitrion){
+      if(turnoActual() !== rivalId()){ diag("Pedido de ficha ignorado (ya no es su turno)."); return; }
       const f=pozoReal.shift()||null; fichasEnPozo=pozoReal.length;
       if(relojTipo==="ajedrez"){
         const elapsed=Math.floor((Date.now()-(turnoInicioTS||Date.now()))/1000);
@@ -963,6 +977,7 @@ function manejarMensaje(msg){
     }
   }
   else if(msg.tipo==="fichaRobada"){
+    esperandoFicha = false; clearTimeout(timeoutEsperaFicha); $('btnRobar').disabled = false;
     if(msg.ficha) ponerEnAtril(msg.ficha);
     fichasEnPozo=msg.pozo; numeroTurno=msg.numeroTurno;
     turnoInicioTS=msg.ts||Date.now(); if(msg.tiempoRestante) tiempoRestante=msg.tiempoRestante;
@@ -1183,7 +1198,17 @@ function robar(){
     numeroTurno++; turnoInicioTS=Date.now();
     enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos:[],robo:true,numeroTurno,idMano,conteo:fichasAtril().length,ts:turnoInicioTS,tiempoRestante});
     iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
-  } else { enviar({tipo:"pedirFicha"}); log("⏳ Pidiendo ficha..."); }
+  } else {
+    if(esperandoFicha){ diag("Ya hay un pedido de ficha en curso, esperá la respuesta."); return; }
+    esperandoFicha = true;
+    $('btnRobar').disabled = true;
+    enviar({tipo:"pedirFicha"}); log("⏳ Pidiendo ficha...");
+    // Seguro: si por algo se pierde la respuesta, no dejar el botón trabado para siempre
+    clearTimeout(timeoutEsperaFicha);
+    timeoutEsperaFicha = setTimeout(()=>{
+      if(esperandoFicha){ esperandoFicha=false; actualizarUI(); diag("⚠️ No llegó respuesta del pedido de ficha en 12s, se liberó el botón."); }
+    }, 12000);
+  }
 }
 function mostrarValidacion(ok,t){ const m=$('msgValidacion'); m.textContent=t; m.className=ok?"bueno":"malo"; m.classList.remove('oculto'); }
 function limpiarValidacion(){ $('msgValidacion').classList.add('oculto'); document.querySelectorAll('.celda.invalida').forEach(c=>c.classList.remove('invalida')); }
