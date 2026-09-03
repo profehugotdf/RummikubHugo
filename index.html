@@ -931,6 +931,11 @@ function nuevaPartida(){
 }
 
 function manejarMensaje(msg){
+  const tiposConEpoca = ["jugada","fichaRobada","resultadoMano"];
+  if(tiposConEpoca.includes(msg.tipo) && msg.idMano!=null && msg.idMano!==idMano){
+    diag("⚠️ Descartado mensaje de otra mano (tipo:"+msg.tipo+", esperaba mano "+idMano+", llegó "+msg.idMano+").");
+    return;
+  }
   if(msg.tipo==="nombre"){ nombres[msg.id]=msg.nombre; actualizarUI(); actualizarMarcador(); guardar(); }
   else if(msg.tipo==="reparto"){
     atril=new Array(ATRIL_CELDAS).fill(null); msg.mano.forEach(f=>ponerEnAtril(f));
@@ -953,7 +958,7 @@ function manejarMensaje(msg){
         tiempoRestante[rivalId()]=Math.max(0,(tiempoRestante[rivalId()]||0)-elapsed);
       }
       numeroTurno++; turnoInicioTS=Date.now();
-      enviar({tipo:"fichaRobada",ficha:f,pozo:fichasEnPozo,numeroTurno,ts:turnoInicioTS,tiempoRestante});
+      enviar({tipo:"fichaRobada",ficha:f,pozo:fichasEnPozo,numeroTurno,idMano,ts:turnoInicioTS,tiempoRestante});
       iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
     }
   }
@@ -1158,7 +1163,7 @@ function enviarJugada(){
     tiempoRestante[miId()]=Math.max(0,(tiempoRestante[miId()]||0)-elapsed);
   }
   numeroTurno++; turnoInicioTS=Date.now();
-  enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos,gano,numeroTurno,conteo:fichasAtril().length,ts:turnoInicioTS,tiempoRestante});
+  enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos,gano,numeroTurno,idMano,conteo:fichasAtril().length,ts:turnoInicioTS,tiempoRestante});
   if(gano){ victorias[miId()]++; actualizarMarcador(); }
   actualizarUI(); guardar();
   if(gano) finPartida(true);
@@ -1176,7 +1181,7 @@ function robar(){
       tiempoRestante[miId()]=Math.max(0,(tiempoRestante[miId()]||0)-elapsed);
     }
     numeroTurno++; turnoInicioTS=Date.now();
-    enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos:[],robo:true,numeroTurno,conteo:fichasAtril().length,ts:turnoInicioTS,tiempoRestante});
+    enviar({tipo:"jugada",mesa,pozo:fichasEnPozo,movimientos:[],robo:true,numeroTurno,idMano,conteo:fichasAtril().length,ts:turnoInicioTS,tiempoRestante});
     iniciarTurnoSiCorresponde(); render(); actualizarUI(); guardar();
   } else { enviar({tipo:"pedirFicha"}); log("⏳ Pidiendo ficha..."); }
 }
@@ -1214,7 +1219,7 @@ async function reproducirJugada(msg){
       if(modoJuego==="puntaje"){
         const p=calcularPuntosAtril();
         puntos[miId()]=(puntos[miId()]||0)+p;
-        enviar({tipo:"resultadoMano", perdedorId:miId(), puntos:p});
+        enviar({tipo:"resultadoMano", perdedorId:miId(), puntos:p, idMano});
         comprobarFinSerie();
       }
       actualizarMarcador(); guardar(); render(); actualizarUI(); finPartida(false); return;
@@ -1272,7 +1277,17 @@ function crearFichaDiv(f){
   else { d.classList.add("c-"+f.color); d.textContent=f.num; }
   d.dataset.fid=f.id; hacerArrastrable(d,f); return d;
 }
-function render(){ renderAtril(); renderMesa(); }
+function render(){ renderAtril(); renderMesa(); verificarDuplicados(); }
+function verificarDuplicados(){
+  const vistos = new Map();
+  const revisar = (f, origen)=>{
+    if(!f) return;
+    if(vistos.has(f.id)){ diag("⚠️ Ficha repetida detectada: id "+f.id+" ("+(f.comodin?"comodín":f.color+" "+f.num)+") en "+vistos.get(f.id)+" y "+origen+"."); }
+    else vistos.set(f.id, origen);
+  };
+  mesa.forEach(f=>revisar(f,"mesa"));
+  atril.forEach(f=>revisar(f,"atril"));
+}
 function renderMesa(){
   const c=$('mesa'); c.innerHTML="";
   const idsNuevos = new Set();
