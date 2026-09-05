@@ -275,6 +275,8 @@ let peer=null, conn=null, esAnfitrion=false, miCodigo=null, codigoRival=null;
 let modoConexion="internet", pcOffline=null; // [FIX-6] modo sin Internet
 let intentandoReconectar=false, conexionEnProgreso=false;
 let intentosMismoCodigo=0;
+let intentosSenalizacion=0;
+const MAX_INTENTOS_SENALIZACION=3;
 let reintentosFallidos=0;
 const MAX_REINTENTOS = 20;
 const RECONNECT_BASE_MS = 4000;   // primer reintento a los 4s (le da margen al servidor de PeerJS para liberar el código viejo)
@@ -555,6 +557,7 @@ async function crearPeer(idDeseado, alAbrir){
     diag("Peer listo (id "+id+")");
     reintentosFallidos = 0; // reset backoff
     intentosMismoCodigo = 0; // el código quedó confirmado, reseteamos el contador
+    intentosSenalizacion = 0; // señalización sana de nuevo
     if(alAbrir) alAbrir(id);
   });
 
@@ -581,12 +584,19 @@ async function crearPeer(idDeseado, alAbrir){
   });
 
   peer.on('disconnected',()=>{
-    diag("Señalización perdida. Reintentando en 2s...");
-    setTimeout(()=>{
-      if(peer && !peer.destroyed){
-        try{ peer.reconnect(); }catch(e){ diag("reconnect() falló: "+e); }
-      }
-    }, 2000);
+    intentosSenalizacion++;
+    if(intentosSenalizacion <= MAX_INTENTOS_SENALIZACION){
+      diag("Señalización perdida. Reintentando ("+intentosSenalizacion+"/"+MAX_INTENTOS_SENALIZACION+") en 2s...");
+      setTimeout(()=>{
+        if(peer && !peer.destroyed){
+          try{ peer.reconnect(); }catch(e){ diag("reconnect() falló: "+e); }
+        }
+      }, 2000);
+    } else {
+      diag("⚠️ La señalización no se recupera sola. Forzando reconexión completa...");
+      intentosSenalizacion = 0;
+      programarReconexion();
+    }
   });
 
   // [FIX-2] El anfitrión SIEMPRE escucha conexiones entrantes
